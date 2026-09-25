@@ -7,6 +7,7 @@ nonisolated struct SampleProduct: Codable, Equatable, Identifiable, Sendable {
     var category: String
     var asset: String
     var aspect: Double
+    var product_url: String
 
     // Bundled titles include the brand, colour and product name.
     func matchesSearch(_ query: String) -> Bool {

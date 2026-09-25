@@ -4,8 +4,17 @@ struct CanvasImageDetails: View {
     let product: SampleProduct
     @Binding var status: String
     let onDelete: () -> Void
+    let availability: GarmsAPI.ProductClassification?
+    let onAvailability: (GarmsAPI.ProductClassification) -> Void
     @State private var showingDeleteConfirmation = false
     @State private var productImage: CGImage?
+    @State private var scrapingPage = false
+    @State private var scrapedPage: GarmsAPI.ScrapedPage?
+    @State private var scrapeError: String?
+    @State private var showingMarkdown = false
+    @State private var checkingConnection = false
+    @State private var connectionMessage: String?
+    @State private var connectionFailed = false
     @Environment(\.dismiss) private var dismiss
 
     // Placeholder details derived from the bundled sample names.
@@ -54,7 +63,7 @@ struct CanvasImageDetails: View {
                     LabeledContent("Name", value: product.title)
                     LabeledContent("Price", value: "£250.00")
                     LabeledContent("URL") {
-                        if let url = URL(string: "https://example.com/products/\(product.id)") {
+                        if let url = URL(string: product.product_url) {
                             Link(destination: url) {
                                 Text(url.absoluteString)
                                     .lineLimit(1)
@@ -73,6 +82,63 @@ struct CanvasImageDetails: View {
                     .pickerStyle(.menu)
                     LabeledContent("Colour", value: colour)
                     LabeledContent("Brand", value: brand)
+                }
+                Section("Listing availability") {
+                    Button {
+                        scrapingPage = true
+                    } label: {
+                        HStack {
+                            Label(scrapingPage ? "Checking availability…" : "Check availability", systemImage: "arrow.clockwise")
+                            Spacer()
+                            if scrapingPage { ProgressView() }
+                        }
+                    }
+                    .disabled(scrapingPage || product.product_url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if let scrapeError {
+                        Text(scrapeError)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    if let classification = scrapedPage?.classification ?? availability {
+                        LabeledContent("Availability", value: classification.label)
+                            .accessibilityIdentifier("productAvailability")
+                        if let message = classification.error {
+                            Text(message)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if scrapedPage != nil {
+                        LabeledContent("Availability", value: "Unknown")
+                    }
+                    if let scrapedPage {
+                        Button("View Markdown") { showingMarkdown = true }
+                        Text(scrapedPage.url)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let code = scrapedPage.statusCode, code >= 400 {
+                            Text("The source page returned HTTP \(code).")
+                                .font(.footnote)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+                Section("Connection") {
+                    Button {
+                        checkingConnection = true
+                    } label: {
+                        HStack {
+                            Label("Test connection", systemImage: "network")
+                            Spacer()
+                            if checkingConnection { ProgressView() }
+                        }
+                    }
+                    .disabled(checkingConnection)
+                    if let connectionMessage {
+                        Label(connectionMessage, systemImage: connectionFailed ? "exclamationmark.circle" : "checkmark.circle")
+                            .font(.footnote)
+                            .foregroundStyle(connectionFailed ? Color.red : Color.secondary)
+                            .accessibilityIdentifier("connectionResult")
+                    }
                 }
                 Section {
                     Button(role: .destructive) {
@@ -97,6 +163,59 @@ struct CanvasImageDetails: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
+            }
+        }
+        .sheet(isPresented: $showingMarkdown) {
+            NavigationStack {
+                ScrollView {
+                    Text(verbatim: scrapedPage?.markdown ?? "")
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .navigationTitle("Markdown")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { showingMarkdown = false }
+                    }
+                    if let scrapedPage {
+                        ToolbarItem(placement: .primaryAction) {
+                            ShareLink(item: scrapedPage.markdown)
+                        }
+                    }
+                }
+            }
+        }
+        .task(id: scrapingPage) {
+            guard scrapingPage else { return }
+            scrapedPage = nil
+            scrapeError = nil
+            defer { scrapingPage = false }
+            do {
+                let page = try await GarmsAPI.scrapePage(url: product.product_url)
+                try Task.checkCancellation()
+                scrapedPage = page
+                if let classification = page.classification { onAvailability(classification) }
+            } catch {
+                guard !Task.isCancelled else { return }
+                scrapeError = error.localizedDescription
+            }
+        }
+        .task(id: checkingConnection) {
+            guard checkingConnection else { return }
+            connectionMessage = nil
+            connectionFailed = false
+            defer { checkingConnection = false }
+            do {
+                let message = try await GarmsAPI.checkConnection()
+                try Task.checkCancellation()
+                connectionMessage = message
+            } catch {
+                guard !Task.isCancelled else { return }
+                connectionFailed = true
+                connectionMessage = error.localizedDescription
             }
         }
         .task(id: product.asset) {

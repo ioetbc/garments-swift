@@ -18,6 +18,51 @@ import Observation
     var inspectedPlacement: StickerPlacement?
     var inspectedGroup: CanvasNamedGroup?
     var error: String?
+    private(set) var availability: [String: GarmsAPI.ProductClassification] = [:]
+
+    func classification(for product: SampleProduct) -> GarmsAPI.ProductClassification? {
+        availability[product.id]
+    }
+
+    func updateAvailability(_ classification: GarmsAPI.ProductClassification, productID: String) {
+        availability[productID] = classification
+        render?()
+    }
+
+    func opacity(for placement: StickerPlacement) -> Float {
+        if dimmedPlacementIDs.contains(placement.id) { return 0.1 }
+        guard let product = document.products[placement.productID] else { return 1 }
+        return classification(for: product)?.isUnavailable == true ? 0.35 : 1
+    }
+
+    func loadAvailability(
+        fetch: @escaping @MainActor @Sendable (String) async throws -> GarmsAPI.ProductClassification? = {
+            try await GarmsAPI.scrapePage(url: $0).classification
+        }
+    ) async {
+        let productIDs = Set(document.placements.values.map(\.productID))
+        let products = productIDs.compactMap { document.products[$0] }
+            .filter { !$0.product_url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.id < $1.id }
+        // Bound startup requests while updating the canvas as each result arrives.
+        await withTaskGroup(of: (String, GarmsAPI.ProductClassification?).self) { group in
+            var remaining = products.makeIterator()
+            func enqueue(_ product: SampleProduct) {
+                group.addTask {
+                    guard !Task.isCancelled else { return (product.id, nil) }
+                    return (product.id, try? await fetch(product.product_url))
+                }
+            }
+            for _ in 0..<3 {
+                if let product = remaining.next() { enqueue(product) }
+            }
+            for await (productID, classification) in group {
+                guard !Task.isCancelled else { group.cancelAll(); break }
+                if let classification { updateAvailability(classification, productID: productID) }
+                if let next = remaining.next() { enqueue(next) }
+            }
+        }
+    }
     var searchQuery = "" {
         didSet {
             guard searchQuery != oldValue else { return }

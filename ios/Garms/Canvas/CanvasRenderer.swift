@@ -63,9 +63,9 @@ import UIKit
             let isNewLayer = layers[id] == nil
             if let existing = layers[id] { layer = existing }
             else { layer = pool.popLast() ?? CALayer(); layer.contentsGravity = .resize; layers[id] = layer; world.addSublayer(layer) }
-            let opacity: Float = session.dimmedPlacementIDs.contains(id) ? 0.1 : 1
+            let opacity = session.opacity(for: p)
             if isNewLayer {
-                // Recycled layers must not inherit the previous product's search state.
+                // Recycled layers must not inherit another product's opacity.
                 layer.opacity = opacity
             } else if layer.opacity != opacity {
                 let previousOpacity = layer.presentation()?.opacity ?? layer.opacity

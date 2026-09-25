@@ -41,6 +41,8 @@ struct CanvasScreen: View {
                         session.inspectedPlacement = nil
                         session.deletePlacement(placement.id)
                         statuses[placement.id] = nil
+                    }, availability: session.classification(for: product), onAvailability: {
+                        session.updateAvailability($0, productID: product.id)
                     })
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
@@ -62,6 +64,7 @@ struct CanvasScreen: View {
             .onChange(of:phase) { _,v in
                 if v != .active { session.resolveInteraction?() }
             }
+            .task { await session.loadAvailability() }
     }
 
 }
