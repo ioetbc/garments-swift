@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CanvasImageDetails: View {
     let product: SampleProduct
+    let library: ImportedAssetLibrary
     @Binding var status: String
     let onDelete: () -> Void
     let availability: GarmsAPI.ProductClassification?
@@ -32,7 +33,7 @@ struct CanvasImageDetails: View {
             Form {
                 Section {
                     TabView {
-                        ForEach(0..<5) { index in
+                        ForEach(0..<(product.isImported == true ? 1 : 5), id: \.self) { index in
                             Group {
                                 if let productImage {
                                     Image(decorative: productImage, scale: 1)
@@ -49,7 +50,7 @@ struct CanvasImageDetails: View {
                             .padding(.top, 16)
                             .padding(.bottom, 48)
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel("\(product.title), image \(index + 1) of 5")
+                            .accessibilityLabel("\(product.title), image \(index + 1) of \(product.isImported == true ? 1 : 5)")
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .always))
@@ -61,7 +62,7 @@ struct CanvasImageDetails: View {
                 }
                 Section {
                     LabeledContent("Name", value: product.title)
-                    LabeledContent("Price", value: product.price.formatted(.currency(code: "GBP")))
+                    LabeledContent("Price", value: product.price?.formatted(.currency(code: "GBP")) ?? "Not available")
                     LabeledContent("URL") {
                         if let url = URL(string: product.product_url) {
                             Link(destination: url) {
@@ -80,8 +81,10 @@ struct CanvasImageDetails: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    LabeledContent("Colour", value: colour)
-                    LabeledContent("Brand", value: brand)
+                    if product.isImported != true {
+                        LabeledContent("Colour", value: colour)
+                        LabeledContent("Brand", value: brand)
+                    }
                 }
                 Section("Listing availability") {
                     Button {
@@ -221,9 +224,9 @@ struct CanvasImageDetails: View {
         .task(id: product.asset) {
             productImage = nil
             let asset = product.asset
+            let data = library.data(for: asset)
             let image = await Task.detached(priority: .userInitiated) {
-                guard let url = CanvasImageWorker.sourceURL(asset) else { return nil as CGImage? }
-                return CanvasImageWorker.decode(url: url, tier: 1024)
+                return CanvasImageWorker.resolve(asset, data: data, tier: 1024)
             }.value
             guard !Task.isCancelled else { return }
             productImage = image

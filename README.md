@@ -45,7 +45,7 @@ For a physical iPhone, set `GARMS_API_BASE_URL` in `ios/Configuration/Debug-Info
 
 For Release builds, configure the target's `INFOPLIST_KEY_GARMS_API_BASE_URL` build setting with the deployed HTTPS origin. Until configured, the button reports that the server address is missing. Release builds require HTTPS and have no local-network transport exception. The Debug exception uses Apple's [NSAllowsLocalNetworking](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking).
 
-Server-only credentials belong in `web/.env.local` locally and the hosting provider's environment settings when deployed. Configure the website deployment's root directory as `web`. The live-link backend is still future work.
+Server-only credentials belong in `web/.env.local` locally and the hosting provider's environment settings when deployed. Configure the website deployment's root directory as `web`. The prototype shared-link endpoint is described below.
 
 ## Documentation
 
@@ -64,3 +64,75 @@ results for 24 hours. Products marked `out_of_stock`, `sold`, `listing_ended`, o
 failures do not mark products unavailable. Search dimming still takes precedence.
 The drawer shows the loaded availability, and manual checks update that product’s canvas
 availability, even when other products share its URL. VoiceOver reads the availability status too.
+
+## Shared-link imports (prototype)
+
+Share one HTTP(S) product link to **Garms**, tap **Add**, then **Done** and manually
+open Garms. A link sticker appears after initial canvas layout; the app processes
+imports sequentially while active. The Imports button shows progress and failed
+links with Retry and Dismiss. Dismiss removes that imported sticker. Exact URLs
+are deduplicated within the session, preserving size/variant queries and fragments.
+A missing or rejected image leaves the linked placeholder available for retry.
+
+The app and embedded `GarmsShare` extension both use App Group
+`group.f.garment-swift-2.imports`. In Xcode, select your development team for both
+targets, register/enable that App Group for `f.garment-swift-2` and
+`f.garment-swift-2.share`, and refresh automatic development provisioning. If your
+team needs different identifiers, update both entitlements and the single
+`SharedLink.appGroup` constant together, plus both bundle identifiers. Install a
+signed build on an iPhone; an unsigned build cannot validate App Group access or
+Share Sheet activation. Garms may need enabling under the Share Sheet's **More**.
+
+Configure `FIRECRAWL_API_KEY` in the server's environment. `POST /api/import`
+returns the submitted URL, nullable title and nullable HTTPS Open Graph image URL.
+It does not run availability classification or use the availability cache. Use
+the physical-device API address instructions above; the extension needs no API
+configuration. Imported prices are unknown, and group totals identify known-price
+subtotals when needed.
+
+**Memory only:** the inbox temporarily retains unconsumed URL handoffs. Once the
+app takes ownership, it acknowledges the handoff; imported products, artwork,
+failures and retries exist only in that app session. Force quitting loses consumed
+imports. There is no canvas restoration or background completion.
+
+Validation on 26 September 2026:
+
+- Unsigned iOS build compiled and embedded `GarmsShare.appex`.
+- All 15 backend tests, TypeScript, lint, and the webpack production build passed.
+  The default Turbopack build was blocked by the environment's worker-port restriction.
+- Shared URL/inbox, import session, availability, initial layout and search checks
+  passed. `MagneticDragChecks.swift:86` fails “Cancellation must restore the document”
+  on both the current tree and unmodified HEAD sources; this existing failure remains.
+- Live Firecrawl extraction of the fixture Vinted UK listing returned “Next top | Vinted”
+  and an `images1.vinted.net` image candidate. Allbirds Men's Tree Runner returned a
+  title without an image; `example.com` returned a valid title-only partial result.
+  These are extraction results, not proof of share capture or support for all listings.
+- Physical-device Safari and Vinted share payloads, activation, provisioning and
+  end-to-end image display still need the signed-device acceptance run in
+  [the import plan](docs/SHARED_LINK_IMPORT_PLAN.md).
+
+Run focused shared URL/inbox checks from the repository root:
+
+```sh
+xcrun swiftc -module-cache-path /tmp/garms-swift-modules ios/SharedImports/*.swift ios/tools/checks/SharedImportChecks.swift -o /tmp/garms-shared-checks
+/tmp/garms-shared-checks
+```
+
+Run UIKit/session and existing canvas checks on an Apple Silicon Mac with Xcode
+26.2 using a standalone Mac Catalyst executable:
+
+```sh
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/ImportSessionChecks.swift
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/AvailabilityChecks.swift
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/InitialLayoutChecks.swift
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/SearchChecks.swift
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/MagneticDragChecks.swift
+```
+
+The import checks inject temporary inbox directories and API/image state; they
+cover layout gating, deduplication, malformed records, failed acknowledgement,
+pause/resume, explicit retries, stale results, geometry preservation and source
+artwork surviving derived-cache clearing. Backend checks run with `cd web && bun test`;
+also run `bunx tsc --noEmit`, `bun run lint` and `bun run build`. In environments
+where Turbopack cannot bind its worker port, `bun run build --webpack` provides a
+production route-integration check.

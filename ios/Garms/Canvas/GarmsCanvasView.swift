@@ -70,6 +70,7 @@ import UIKit
     private var previousTitleLiftedIDs: Set<String> = []
     init(session:CanvasSession) {
         self.session = session; interaction = CanvasInteractionController(session:session); super.init(frame:.zero)
+        renderer.assets.library = session.importedAssets
         isMultipleTouchEnabled = true; clipsToBounds = true
         backgroundColor = .white
         layer.addSublayer(renderer.paperDots)

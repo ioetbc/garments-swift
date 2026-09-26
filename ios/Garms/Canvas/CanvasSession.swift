@@ -5,7 +5,7 @@ import Observation
     @ObservationIgnored var document = CanvasFixtures.make()
     @ObservationIgnored var camera = CanvasCamera()
     @ObservationIgnored var viewport = CGSize.zero
-    @ObservationIgnored private var hasInitialLayout = false
+    @ObservationIgnored private(set) var hasInitialLayout = false
     @ObservationIgnored let index = CanvasSpatialIndex()
     @ObservationIgnored var groups: [[String]] = []
     @ObservationIgnored var committedGroups: [[String]] = []
@@ -14,6 +14,9 @@ import Observation
     @ObservationIgnored var groupingPreview: (moving: String, target: String)?
     @ObservationIgnored var render: (() -> Void)?
     @ObservationIgnored var resolveInteraction: (() -> Void)?
+    @ObservationIgnored let importedAssets = ImportedAssetLibrary()
+    @ObservationIgnored lazy var imports = ImportCoordinator(session: self)
+    var revision = 0
     var selection: String?
     var inspectedPlacement: StickerPlacement?
     var inspectedGroup: CanvasNamedGroup?
@@ -96,8 +99,10 @@ import Observation
         camera = CanvasCamera(center:.init(x:size.width/2,y:size.height/2),zoom:1)
         hasInitialLayout = true
         refresh()
+        imports.start()
     }
     func refresh(rebuild: Bool = true) {
+        revision &+= 1
         if rebuild { index.rebuild(document) }
         if selected.isEmpty { selection = nil; inspectedPlacement = nil }
         detachedLinks = detachedLinks.filter { link in
@@ -137,11 +142,62 @@ import Observation
         document.placements[id] = nil
         document.order.removeAll { $0 == id }
         complete(before)
+        if document.placements[id] == nil {
+            imports.deleted(id)
+            let used = Set(document.placements.values.map(\.productID))
+            document.products = document.products.filter { $0.value.isImported != true || used.contains($0.key) }
+            importedAssets.retain(Set(document.products.values.map(\.asset)))
+        }
     }
     func complete(_ before: CanvasDocument) {
         do { try document.validate() }
         catch { document = before; self.error = error.localizedDescription }
         refresh()
+    }
+    func revealImport(_ id: String) {
+        resolveInteraction?()
+        searchQuery = ""
+        if let placement = document.placements[id] { camera.center = placement.center }
+        select(id)
+    }
+    func insertImport(_ record: SharedImport) -> String? {
+        guard hasInitialLayout else { return nil }
+        resolveInteraction?()
+        let before = document
+        let productID = UUID().uuidString
+        let asset = importedAssets.placeholder()
+        let product = SampleProduct(id: productID, title: record.suggestedTitle ?? URL(string: record.url)?.host ?? "Saved link", category: "", asset: asset, aspect: 300.0 / 220.0, product_url: record.url, isImported: true)
+        let edge = min(CanvasConfiguration.edge.upperBound, max(CanvasConfiguration.edge.lowerBound, 150 / camera.zoom))
+        let offset = Double(document.products.values.filter { $0.isImported == true }.count % 5) * 18 / camera.zoom
+        let placement = StickerPlacement(productID: productID, center: camera.center + WorldPoint(x: offset, y: offset), width: edge, height: edge / product.aspect)
+        document.products[productID] = product
+        document.placements[placement.id] = placement
+        document.order.append(placement.id)
+        complete(before)
+        guard document.placements[placement.id] != nil else { importedAssets.retain(Set(document.products.values.map(\.asset))); return nil }
+        searchQuery = ""
+        select(placement.id)
+        return placement.id
+    }
+    func updateImport(_ id: String, title: String?, artwork: ImportedImageDownload.Artwork?) {
+        guard var placement = document.placements[id], var product = document.products[placement.productID] else { return }
+        resolveInteraction?()
+        // Interaction resolution can commit a newer placement; use that geometry.
+        guard let current = document.placements[id] else { return }
+        placement = current
+        let before = document
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { product.title = title }
+        if let artwork {
+            product.asset = importedAssets.insert(artwork.data)
+            product.aspect = artwork.aspect
+            let edge = max(placement.width, placement.height)
+            placement.width = artwork.aspect >= 1 ? edge : edge * artwork.aspect
+            placement.height = artwork.aspect >= 1 ? edge / artwork.aspect : edge
+        }
+        document.products[product.id] = product
+        document.placements[id] = placement
+        complete(before)
+        importedAssets.retain(Set(document.products.values.map(\.asset)))
     }
     // These also provide non-gesture equivalents for VoiceOver.
     func nudge(x: Double, y: Double) {

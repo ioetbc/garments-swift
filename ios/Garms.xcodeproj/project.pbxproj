@@ -6,20 +6,64 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		ABCD00000000000000000005 /* GarmsShare/ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000002 /* GarmsShare/ShareViewController.swift */; };
+		ABCD00000000000000000006 /* SharedImports/SharedImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* SharedImports/SharedImport.swift */; };
+		ABCD00000000000000000007 /* SharedImports/SharedImportInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000004 /* SharedImports/SharedImportInbox.swift */; };
+		ABCD00000000000000000008 /* SharedImports/SharedImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* SharedImports/SharedImport.swift */; };
+		ABCD00000000000000000009 /* SharedImports/SharedImportInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000004 /* SharedImports/SharedImportInbox.swift */; };
+		ABCD0000000000000000000A /* GarmsShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* GarmsShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		ABCD0000000000000000000E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 440861D23065690500EF5C4B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ABCD00000000000000000010;
+			remoteInfo = GarmsShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		ABCD0000000000000000000D /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				ABCD0000000000000000000A /* GarmsShare.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
-		440861DA3065690500EF5C4B /* Garms.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Garms.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		440861DA3065690500EF5C4B /* Garms.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Garms.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCD00000000000000000001 /* GarmsShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = GarmsShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		ABCD00000000000000000002 /* GarmsShare/ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GarmsShare/ShareViewController.swift; sourceTree = "<group>"; };
+		ABCD00000000000000000003 /* SharedImports/SharedImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedImports/SharedImport.swift; sourceTree = "<group>"; };
+		ABCD00000000000000000004 /* SharedImports/SharedImportInbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedImports/SharedImportInbox.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		440861DC3065690500EF5C4B /* Garms */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Garms";
+			path = Garms;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		440861D73065690500EF5C4B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCD0000000000000000000C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -33,6 +77,9 @@
 			isa = PBXGroup;
 			children = (
 				440861DC3065690500EF5C4B /* Garms */,
+				ABCD00000000000000000002 /* GarmsShare/ShareViewController.swift */,
+				ABCD00000000000000000003 /* SharedImports/SharedImport.swift */,
+				ABCD00000000000000000004 /* SharedImports/SharedImportInbox.swift */,
 				440861DB3065690500EF5C4B /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +88,7 @@
 			isa = PBXGroup;
 			children = (
 				440861DA3065690500EF5C4B /* Garms.app */,
+				ABCD00000000000000000001 /* GarmsShare.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -55,20 +103,38 @@
 				440861D63065690500EF5C4B /* Sources */,
 				440861D73065690500EF5C4B /* Frameworks */,
 				440861D83065690500EF5C4B /* Resources */,
+				ABCD0000000000000000000D /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ABCD0000000000000000000F /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				440861DC3065690500EF5C4B /* Garms */,
+			);
+			name = Garms;
+			packageProductDependencies = (
+			);
+			productName = Garms;
+			productReference = 440861DA3065690500EF5C4B /* Garms.app */;
+			productType = "com.apple.product-type.application";
+		};
+		ABCD00000000000000000010 /* GarmsShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ABCD00000000000000000011 /* Build configuration list for PBXNativeTarget "GarmsShare" */;
+			buildPhases = (
+				ABCD0000000000000000000B /* Sources */,
+				ABCD0000000000000000000C /* Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
-			fileSystemSynchronizedGroups = (
-				440861DC3065690500EF5C4B /* Garms */,
-			);
-			name = "Garms";
-			packageProductDependencies = (
-			);
-			productName = "Garms";
-			productReference = 440861DA3065690500EF5C4B /* Garms.app */;
-			productType = "com.apple.product-type.application";
+			name = GarmsShare;
+			productName = GarmsShare;
+			productReference = ABCD00000000000000000001 /* GarmsShare.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -99,6 +165,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				ABCD00000000000000000010 /* GarmsShare */,
 				440861D93065690500EF5C4B /* Garms */,
 			);
 		};
@@ -119,10 +186,30 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABCD00000000000000000008 /* SharedImports/SharedImport.swift in Sources */,
+				ABCD00000000000000000009 /* SharedImports/SharedImportInbox.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ABCD0000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABCD00000000000000000005 /* GarmsShare/ShareViewController.swift in Sources */,
+				ABCD00000000000000000006 /* SharedImports/SharedImport.swift in Sources */,
+				ABCD00000000000000000007 /* SharedImports/SharedImportInbox.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		ABCD0000000000000000000F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ABCD00000000000000000010 /* GarmsShare */;
+			targetProxy = ABCD0000000000000000000E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		440861E33065690900EF5C4B /* Debug */ = {
@@ -249,6 +336,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Garms/Garms.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W225T5YY85;
@@ -282,6 +370,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Garms/Garms.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W225T5YY85;
@@ -309,6 +398,48 @@
 			};
 			name = Release;
 		};
+		ABCD00000000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = GarmsShare/GarmsShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W225T5YY85;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GarmsShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "f.garment-swift-2.share";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		ABCD00000000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = GarmsShare/GarmsShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W225T5YY85;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = GarmsShare/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "f.garment-swift-2.share";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -326,6 +457,15 @@
 			buildConfigurations = (
 				440861E63065690900EF5C4B /* Debug */,
 				440861E73065690900EF5C4B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ABCD00000000000000000011 /* Build configuration list for PBXNativeTarget "GarmsShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABCD00000000000000000012 /* Debug */,
+				ABCD00000000000000000013 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

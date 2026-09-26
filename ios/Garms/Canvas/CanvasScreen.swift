@@ -4,6 +4,7 @@ import UIKit
 struct CanvasScreen: View {
     @State private var session = CanvasSession()
     @State private var statuses: [String: String] = [:]
+    @State private var showingImports = false
     @State private var searchExpanded = false
     @State private var groupPlacement: StickerPlacement?
     @Environment(\.scenePhase) private var phase
@@ -19,6 +20,11 @@ struct CanvasScreen: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { showingImports = true } label: {
+                            Label("Imports (\(session.imports.items.filter { $0.state != "Ready" }.count))", systemImage: "square.and.arrow.down")
+                        }
+                    }
                     DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 }
                 .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
@@ -44,9 +50,11 @@ struct CanvasScreen: View {
             ), onDismiss: {
                 groupPlacement = nil
             }) { group in
+                let _ = session.revision
                 CanvasGroupNameDrawer(
                     group: session.document.namedGroups?.first { $0.id == group.id } ?? group,
                     document: session.document,
+                    library: session.importedAssets,
                     onOpenItem: { placement in
                         groupPlacement = placement
                     }
@@ -61,19 +69,42 @@ struct CanvasScreen: View {
                 .presentationDetents([.height(410), .large])
                 .presentationDragIndicator(.visible)
             }
+            .sheet(isPresented: $showingImports) {
+                NavigationStack {
+                    List {
+                        if session.imports.items.isEmpty { Text("Share a link, then open Garms to import it.") }
+                        ForEach(session.imports.items) { item in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(item.record.url).lineLimit(2)
+                                Text(item.failure ?? item.state).font(.caption)
+                                HStack {
+                                    if item.state == "Failed" { Button("Retry") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
+                                    Button("Dismiss", role: .destructive) { session.imports.dismiss(item.id) }.buttonStyle(.bordered)
+                                }
+                            }
+                        }
+                    }
+                    .navigationTitle("Imports")
+                    .toolbar { Button("Done") { showingImports = false } }
+                }
+                .presentationDetents([.medium, .large])
+            }
             .alert("Canvas needs attention",isPresented:Binding(get:{ session.error != nil },set:{ if !$0 { session.error = nil } })) {
                 Button("OK") { session.error = nil }
             } message: { Text(session.error ?? "") }
             .onChange(of:phase) { _,v in
                 if v != .active { session.resolveInteraction?() }
+                session.imports.setActive(v == .active)
             }
+            .task { session.imports.setActive(phase == .active) }
             .task { await session.loadAvailability() }
     }
 
     @ViewBuilder
     private func productDetails(for placement: StickerPlacement, onDelete: @escaping () -> Void) -> some View {
+        let _ = session.revision
         if let product = session.document.products[placement.productID] {
-            CanvasImageDetails(product: product, status: Binding(
+            CanvasImageDetails(product: product, library: session.importedAssets, status: Binding(
                 get: { statuses[placement.id] ?? "Wishlist" },
                 set: { statuses[placement.id] = $0 }
             ), onDelete: {
@@ -98,15 +129,17 @@ private struct CanvasGroupNameDrawer: View {
     let onOpenItem: (StickerPlacement) -> Void
     let document: CanvasDocument
     let members: [StickerPlacement]
+    let library: ImportedAssetLibrary
     let sum: Decimal
     @State private var name: String
     @State private var backgroundColour: CanvasGroupColour?
     @FocusState private var focused: Bool
 
-    init(group: CanvasNamedGroup, document: CanvasDocument, onOpenItem: @escaping (StickerPlacement) -> Void, onUpdate: @escaping (String, CanvasGroupColour?) -> Void) {
+    init(group: CanvasNamedGroup, document: CanvasDocument, library: ImportedAssetLibrary, onOpenItem: @escaping (StickerPlacement) -> Void, onUpdate: @escaping (String, CanvasGroupColour?) -> Void) {
         self.onUpdate = onUpdate
         self.onOpenItem = onOpenItem
         self.document = document
+        self.library = library
         members = group.members.compactMap { document.placements[$0] }
         sum = document.sum(for: group)
         _name = State(initialValue: group.name)
@@ -126,7 +159,7 @@ private struct CanvasGroupNameDrawer: View {
                         if value.count > 60 { name = String(value.prefix(60)) }
                         onUpdate(String(value.prefix(60)), backgroundColour)
                     }
-                LabeledContent("Cost of group", value: sum.formatted(.currency(code: "GBP")))
+                LabeledContent(members.contains { document.products[$0.productID]?.price == nil } ? "Known-price subtotal" : "Cost of group", value: members.contains { document.products[$0.productID]?.price != nil } ? sum.formatted(.currency(code: "GBP")) : "Not available")
                 Section("Background colour") {
                     ColorPicker("Colour", selection: Binding(
                         get: {
@@ -155,7 +188,7 @@ private struct CanvasGroupNameDrawer: View {
                                 onOpenItem(placement)
                             } label: {
                                 HStack(spacing: 12) {
-                                    CanvasGroupItemThumbnail(asset: product.asset)
+                                    CanvasGroupItemThumbnail(asset: product.asset, library: library)
                                     Text(product.title)
                                         .foregroundStyle(.primary)
                                         .lineLimit(1)
@@ -183,6 +216,7 @@ private struct CanvasGroupNameDrawer: View {
 
 private struct CanvasGroupItemThumbnail: View {
     let asset: String
+    let library: ImportedAssetLibrary
     @State private var thumbnail: CGImage?
 
     var body: some View {
@@ -201,9 +235,9 @@ private struct CanvasGroupItemThumbnail: View {
         .task(id: asset) {
             thumbnail = nil
             let asset = asset
+            let data = library.data(for: asset)
             let image = await Task.detached(priority: .userInitiated) {
-                guard let url = CanvasImageWorker.sourceURL(asset) else { return nil as CGImage? }
-                return CanvasImageWorker.decode(url: url, tier: 192)
+                return CanvasImageWorker.resolve(asset, data: data, tier: 192)
             }.value
             guard !Task.isCancelled else { return }
             thumbnail = image

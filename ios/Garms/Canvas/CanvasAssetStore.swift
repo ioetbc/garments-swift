@@ -19,6 +19,14 @@ nonisolated enum CanvasImageWorker {
         guard let src = CGImageSourceCreateWithURL(url as CFURL,nil) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(src,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:tier,kCGImageSourceShouldCacheImmediately:true] as CFDictionary)
     }
+    static func decode(data: Data, tier: Int) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: tier, kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+    }
+    static func resolve(_ asset: String, data: Data?, tier: Int) -> CGImage? {
+        if let data { return decode(data: data, tier: tier) }
+        return sourceURL(asset).flatMap { decode(url: $0, tier: tier) }
+    }
     static func mask(_ image: CGImage) -> AlphaMask? {
         let w = image.width, h = image.height
         var rgba = [UInt8](repeating:0,count:w*h*4)
@@ -31,6 +39,7 @@ nonisolated enum CanvasImageWorker {
     }
 }
 @MainActor final class CanvasAssetStore {
+    var library: ImportedAssetLibrary?
     struct Key: Hashable, Sendable { var asset: String; var tier: Int }
     private struct Entry { var image: CGImage; var stamp: Int; var cost: Int }
     private var cache: [Key:Entry] = [:]
@@ -64,11 +73,11 @@ nonisolated enum CanvasImageWorker {
         while inFlight < 2, !queue.isEmpty {
             let key = queue.removeFirst(); inFlight += 1
             let gen = generation
+            let data = library?.data(for: key.asset)
             Task { [weak self] in
                 let result = await Task.detached(priority:.userInitiated) { () -> (CGImage?, AlphaMask?) in
-                    guard let url = CanvasImageWorker.sourceURL(key.asset) else { return (nil,nil) }
-                    let image = CanvasImageWorker.decode(url:url,tier:key.tier)
-                    let mask = CanvasImageWorker.decode(url:url,tier:192).flatMap(CanvasImageWorker.mask)
+                    let image = CanvasImageWorker.resolve(key.asset, data: data, tier: key.tier)
+                    let mask = CanvasImageWorker.resolve(key.asset, data: data, tier: 192).flatMap(CanvasImageWorker.mask)
                     return (image,mask)
                 }.value
                 guard let self else { return }
@@ -90,7 +99,7 @@ nonisolated enum CanvasImageWorker {
     }
     func memoryWarning() {
         generation += 1; pressureUntil = Date().addingTimeInterval(20)
-        cache.removeAll(); bytes = 0; needed.removeAll(); queue.removeAll(); requests.removeAll(); changed?()
+        cache.removeAll(); masks.removeAll(); bytes = 0; needed.removeAll(); queue.removeAll(); requests.removeAll(); changed?()
     }
     func hit(_ p: StickerPlacement, product: SampleProduct, point: WorldPoint) -> Bool {
         guard p.bounds.contains(point.cg) else { return false }

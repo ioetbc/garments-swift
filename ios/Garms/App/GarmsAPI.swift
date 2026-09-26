@@ -90,6 +90,25 @@ enum GarmsAPI {
     private struct ScrapeRequest: Encodable { let url: String }
     private struct ErrorResponse: Decodable { let error: String }
 
+    struct ImportedProduct: Decodable, Sendable {
+        let url: String
+        let title: String?
+        let imageURL: String?
+    }
+    static func importProduct(url: String) async throws -> ImportedProduct {
+        _ = try SharedLink.normalized(url)
+        var request = URLRequest(url: try baseURL().appendingPathComponent("api/import"), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(ScrapeRequest(url: url))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else { throw ConnectionError.invalidResponse }
+        guard response.statusCode == 200 else {
+            throw ConnectionError.message((try? JSONDecoder().decode(ErrorResponse.self, from: data).error) ?? "Import failed. Please retry.")
+        }
+        return try JSONDecoder().decode(ImportedProduct.self, from: data)
+    }
+
     static func scrapePage(url address: String) async throws -> ScrapedPage {
         let address = address.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let pageURL = URL(string: address),

@@ -10,7 +10,8 @@ nonisolated struct SampleProduct: Codable, Equatable, Identifiable, Sendable {
     var product_url: String
 
     // Sample pricing until saved listing prices are available.
-    var price: Decimal { 250 }
+    var isImported: Bool? = nil
+    var price: Decimal? { isImported == true ? nil : 250 }
 
     // Bundled titles include the brand, colour and product name.
     func matchesSearch(_ query: String) -> Bool {
