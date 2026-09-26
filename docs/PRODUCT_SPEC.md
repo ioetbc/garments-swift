@@ -34,6 +34,8 @@ Keep the interface strictly focused on fashion for now. Structure the underlying
 
 **Constraint:** foreground extraction can select an entire person wearing clothes. Isolating an individual garment from a model or splitting a complete outfit into separate products is a different, more complex feature. A complete outfit screenshot initially remains one saved reference.
 
+For shared-link background removal, keeping the whole person is accepted. Keep all detected foreground subjects together in one sticker rather than selecting one or splitting them. See [the implementation plan](BACKGROUND_REMOVAL_PLAN.md).
+
 ### Import from shared links — Agreed
 
 From another app or website, such as Vinted, use the iOS share sheet to send a listing to Garms.

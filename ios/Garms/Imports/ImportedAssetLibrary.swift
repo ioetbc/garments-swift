@@ -10,15 +10,7 @@ import ImageIO
         return key
     }
     func retain(_ keys: Set<String>) { sources = sources.filter { keys.contains($0.key) } }
-    func placeholder() -> String {
-        let format = UIGraphicsImageRendererFormat(); format.scale = 1
-        let image = UIGraphicsImageRenderer(size: CGSize(width: 300, height: 220), format: format).image { context in
-            UIColor.secondarySystemBackground.setFill(); context.fill(CGRect(x: 0, y: 0, width: 300, height: 220))
-            let text = "↗\nSaved link" as NSString
-            text.draw(in: CGRect(x: 25, y: 65, width: 250, height: 120), withAttributes: [.font: UIFont.systemFont(ofSize: 30), .foregroundColor: UIColor.label])
-        }
-        return insert(image.pngData()!)
-    }
+
 }
 
 nonisolated final class HTTPSImageRedirects: NSObject, URLSessionTaskDelegate, Sendable {
@@ -37,12 +29,13 @@ nonisolated enum ImportedImageDownload {
         let session = URLSession(configuration: configuration, delegate: HTTPSImageRedirects(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(from: url)
-        guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-              response.mimeType?.hasPrefix("image/") == true,
-              response.expectedContentLength <= 10 * 1024 * 1024 else { throw ImageError.invalid }
+        guard let response = response as? HTTPURLResponse else { throw ImageError.detail("Image download returned a non-HTTP response.") }
+        guard response.statusCode == 200 else { throw ImageError.detail("Image download failed: HTTP \(response.statusCode).") }
+        guard response.mimeType?.hasPrefix("image/") == true else { throw ImageError.detail("Image download rejected Content-Type: \(response.mimeType ?? "missing").") }
+        guard response.expectedContentLength <= 10 * 1024 * 1024 else { throw ImageError.detail("Image Content-Length exceeds the 10 MB limit: \(response.expectedContentLength) bytes.") }
         var data = Data()
         for try await byte in bytes {
-            if data.count >= 10 * 1024 * 1024 { throw ImageError.invalid }
+            if data.count >= 10 * 1024 * 1024 { throw ImageError.detail("Downloaded image exceeds the 10 MB limit.") }
             data.append(byte)
         }
         try Task.checkCancellation()
@@ -52,16 +45,21 @@ nonisolated enum ImportedImageDownload {
                   let width = props[kCGImagePropertyPixelWidth] as? Double,
                   let height = props[kCGImagePropertyPixelHeight] as? Double,
                   width > 0, height > 0, width <= 20000, height <= 20000, width * height <= 80_000_000,
-                  let image = CanvasImageWorker.decode(data: data, tier: 2048) else { throw ImageError.invalid }
+                  let image = CanvasImageWorker.decode(data: data, tier: 2048) else { throw ImageError.detail("Image decoding failed or dimensions exceed 20,000 pixels / 80 megapixels.") }
             let output = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw ImageError.invalid }
+            guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw ImageError.detail("Could not encode the downloaded image as PNG.") }
             CGImageDestinationAddImage(destination, image, nil)
-            guard CGImageDestinationFinalize(destination) else { throw ImageError.invalid }
+            guard CGImageDestinationFinalize(destination) else { throw ImageError.detail("Could not encode the downloaded image as PNG.") }
             return Artwork(data: output as Data, aspect: Double(image.width) / Double(image.height))
         }.value
     }
     enum ImageError: LocalizedError {
-        case invalid
-        var errorDescription: String? { "The image could not be loaded. The saved link is still available." }
+        case invalid, detail(String)
+        var errorDescription: String? {
+            switch self {
+            case .invalid: "The image could not be installed. The saved link is still available."
+            case .detail(let message): message
+            }
+        }
     }
 }

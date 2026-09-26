@@ -60,11 +60,14 @@ if (!response.ok) throw new Error(result.error);
 // Example only: confidence is model-reported and may be null.
 ```
 
-`html` is required; `url` is optional context. Success statuses are `out_of_stock`,
-`sold`, `listing_ended`, `removed`, and `available`. For identifiable products,
-`available` is the fallback when none of the four unavailable conditions applies.
-If conditions overlap, precedence is sold → listing ended → removed → out of stock.
-The model focuses on the main product rather than recommended items.
+`html` is required; `url` is optional context. Classification statuses are `unknown`,
+`available`, and `sold`. `sold` covers every confirmed unavailable state, including
+out of stock, removed, and ended listings. `available` requires positive purchase
+availability evidence. Missing, conflicting, or blocked evidence returns `unknown`,
+with `available: null`; otherwise `available` is a boolean. The server also defaults
+to `unknown` unless Jev reports at least 75% probability for its selected
+`available` or `sold` answer. Missing or invalid probabilities return `unknown`.
+The model focuses on the main product or selected variant rather than recommended items.
 
 HTML extraction retains page text, product metadata, button state and JSON-LD,
 while removing executable scripts and styles. Requests are limited to 1 MB and
@@ -73,7 +76,7 @@ truncated, so availability evidence is not silently dropped. Submit the product
 section and its structured data for larger pages.
 
 Errors: `400` invalid input, `413` oversized input, `415` wrong content type,
-`422` empty/unusable content (including model-detected access challenges),
+`422` empty/unusable extracted content,
 `503` missing server credentials, `502` model failure/timeout. Errors never imply
 that a product is available. Classification is probabilistic; confidence is the
 model's reported probability, not a guarantee. The route currently follows the
@@ -93,7 +96,7 @@ In the iOS product details form, tap **Listing availability → Check availabili
 the product’s `product_url` from `CanvasFixtures.swift`. Fixtures use a mix of Vinted, eBay, and SSENSE listings, also shown in each
 product’s URL row. The drawer shows the Jev classification. **View Markdown** opens the retrieved content with a share action.
 Loading, validation, service errors, and source HTTP errors are displayed. Leaving
-the view cancels the client task. The server passes the Markdown directly to the existing Jev classifier, with the source URL and HTTP status as context. Set `AI_GATEWAY_API_KEY` as described above.
+the view cancels the client task. The server passes Markdown to Jev, with the source URL and HTTP status as context. Known hidden accessibility elements are excluded during scraping before Markdown conversion. Set `AI_GATEWAY_API_KEY` as described above.
 
 `POST /api/scrape` accepts `{ "url": "https://example.com/product" }` and returns:
 
@@ -106,7 +109,11 @@ Markdown, so its status is preserved separately from this API's status. No usabl
 Markdown returns 422. Invalid input returns 400/413/415; rejected credentials, access, or
 insufficient credits return 503, throttling 429, upstream failures 502, and timeout
 504. The server uses the installed `firecrawl` SDK to call [Firecrawl v2 scrape](https://docs.firecrawl.dev/api-reference/endpoint/scrape)
-with Markdown output, main content only, and `maxAge: 0` for fresh product data.
+with Markdown output, `onlyMainContent: false` to retain product details, and `maxAge: 0` for fresh product data.
+Known hidden elements are excluded before Markdown conversion. No extra render wait
+is added: on the investigated Vinted listing, waiting loaded unrelated recommendations
+and pushed the page beyond the classification limit. Sparse content and isolated UI
+announcements are not sufficient availability evidence.
 Automatic retries and long-running auto-resume are disabled. The SDK bounds
 requests to 50 seconds; cancelling the iOS task stops waiting locally, but an
 already submitted Firecrawl scrape may continue on the server.
@@ -117,9 +124,12 @@ The combined scrape route allows 90 seconds, with a 50-second scrape budget and
 20-second classification budget; inference retries are disabled. The iOS request
 allows 95 seconds. Classification failures return HTTP 200 with the fetched
 Markdown and `classification.status: "unknown"` plus an explanatory `error`.
+The drawer shows **Couldn’t check** with the reason for provider demand, rate limits,
+authentication failures, timeouts, or connection errors. Raw provider details stay
+in server logs; failures are not treated as sold.
 Access failures (except 404/410) and Markdown over 24,000 characters skip inference.
 Unreadable results become unknown, and a source 404/410 can never become active.
-The drawer displays `available` as **Active**, separately from personal ownership
+The drawer displays `available` as **Available**, separately from personal ownership
 status. The canvas checks each product independently on load and fades unavailable
 products; manual drawer checks also update the canvas. Successful results are
 cached on the server as described below.

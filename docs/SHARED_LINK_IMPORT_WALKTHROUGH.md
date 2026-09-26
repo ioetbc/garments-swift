@@ -1,6 +1,6 @@
 # How shared-link importing works
 
-This change lets you share a product link from another app, save it to a small waiting area, and turn it into a sticker when you open Garms. Garms initially shows a placeholder, then replaces it with the product picture if it can find and download one.
+This change lets you share a product link from another app, save it to a small waiting area, and turn it into a sticker when you open Garms. Garms initially shows a placeholder, then shows the downloaded original and attempts to replace it with a transparent foreground cutout.
 
 There are three places involved: the little Garms window in the iPhone Share Sheet, the main Garms app, and our web server. They each have a different job. The Share Sheet window captures the link. The server reads the product page. The main app manages the queue, downloads the picture, and puts the result on the canvas.
 
@@ -16,7 +16,9 @@ Imagine sharing a jacket from Safari:
 4. **A placeholder appears.** `CanvasSession.swift` adds a linked sticker near the middle of the current view. It waits for the initial sample layout to finish first.
 5. **Garms asks our server about the jacket.** `GarmsAPI.swift` sends the link to `/api/import`. The server uses Firecrawl, a service that reads web pages, to look for a title and a representative picture address.
 6. **The phone downloads the picture.** `ImportedAssetLibrary.swift` contains the downloader and keeps the resulting picture in memory. The server returns an image address; it does not send the picture itself in the import response.
-7. **The placeholder becomes the product sticker.** `CanvasSession.swift` updates the existing item. If you have moved or resized it while waiting, those changes are preserved.
+7. **The original appears immediately.** `CanvasSession.swift` installs the bounded, orientation-normalised source, using one asset key for both the original and displayed image.
+8. **The app removes the background.** `ForegroundCutoutProcessor.swift` runs Vision off the main thread, selects `allInstances`, and generates a cropped PNG with alpha. Whole people and multiple separated subjects remain one sticker.
+9. **The cutout replaces the original on the canvas.** The current centre, longest edge and stacking order are preserved after resolving any active interaction. Group proximity is reconciled normally. Product details show labelled Cutout and Original pages, including if the sheet was already open.
 
 ```mermaid
 flowchart TD
@@ -27,10 +29,14 @@ flowchart TD
     D -->|Send the product link| F[Our server: ask Firecrawl for title and image address]
     F --> D
     D --> G[Phone: download and keep the picture in memory]
-    G --> H[Canvas session: update the same sticker]
+    G --> H[Canvas session: show original]
+    H --> I[Vision: extract all foreground subjects off main thread]
+    I --> J[Canvas session: replace artwork; retain original]
 ```
 
-If the page or picture cannot be loaded, the placeholder still contains the original link. You can retry from the Imports sheet. Imports are processed one at a time, and processing pauses when Garms becomes inactive.
+If the page or picture cannot be loaded, the placeholder still contains the original link. You can retry from the Imports sheet. Imports are processed one at a time, and processing pauses when Garms becomes inactive. “Removing background…” identifies the extraction stage. No subjects, unusable output or a Vision error keeps the original and finishes Ready with “Background kept”. “Retry background removal” reuses the saved original without repeating network requests. Vision internal errors receive one automatic GPU retry when supported. Logs identify simulator runs; inference failures there should be checked on a physical iPhone.
+
+The coordinator checkpoints the installed original key and aspect, rather than keeping a second image copy. Reactivation resumes from that source. Cancellation waits for any synchronous Vision request to finish before another begins; attempt and placement guards discard stale results after inactivity, deletion or dismissal.
 
 ## The Share Sheet and its waiting area
 
@@ -79,10 +85,10 @@ Previously, the canvas knew how to show sample pictures shipped inside the app. 
 | **New:** `ios/Garms/Imports/ImportedAssetLibrary.swift` | Holds imported picture data for the current session and generates the “Saved link” placeholder. Also contains the downloader: accepts HTTPS, checks the response, stops oversized downloads, rejects unsuitable images, and shrinks large pictures to a manageable size. |
 | **Changed:** `ios/Garms/Canvas/CanvasAssetStore.swift` | Prepares pictures for drawing and keeps disposable, ready-to-draw copies. Now looks for imported picture data before falling back to bundled samples. The common picture-loading helpers here are also used by details and group thumbnails. |
 | **Changed:** `ios/Garms/Canvas/GarmsCanvasView.swift` | Connects the session's imported-picture library to the existing canvas renderer. This is a small wiring change; the gesture system was not redesigned. |
-| **Changed:** `ios/Garms/Canvas/CanvasImageDetails.swift` | Lets the product details sheet show an imported picture. Imported products get one image instead of the samples' five repeated pages, and their price says “Not available.” It also avoids presenting made-up sample brand/colour details for imports. |
+| **Changed:** `ios/Garms/Canvas/CanvasImageDetails.swift` | Lets the product details sheet show an imported picture. Imported products get Cutout and Original pages when extraction succeeds, or one Original page on fallback, instead of the samples' five repeated pages, and their price says “Not available.” It also avoids presenting made-up sample brand/colour details for imports. |
 | **Changed:** `ios/Garms/Canvas/CanvasDocument.swift` | Defines what a product and sticker contain. Adds a way to recognise imported products and represent their price as unknown. Samples keep their existing £250 value. Group sums include known prices; the screen labels incomplete sums as a known-price subtotal. |
 
-There are two picture stores for a reason. **The imported asset library keeps the source picture for the session. The asset store keeps convenient drawing copies.** If iOS asks Garms to free memory, the drawing copies can be thrown away and recreated from the source picture.
+There are two picture stores for a reason. **The imported asset library keeps originals and cutouts for the session. The asset store keeps convenient drawing copies.** Each product references its displayed asset and optional original asset; cleanup retains their union across products. Successful cutouts receive new keys so drawing tiers and touch masks are rebuilt. If iOS asks Garms to free memory, the drawing copies can be thrown away and recreated from the source picture.
 
 `CanvasRenderer.swift` itself did not need changing. It already asks the asset store for a picture by name. The updated store can now answer that same request using an imported picture.
 
@@ -104,7 +110,7 @@ Live extraction returned a title and image address for the Vinted fixture listin
 
 ## What lasts, and what disappears
 
-Before Garms reads a shared link, its little inbox file stays on disk. After Garms takes ownership, that file is removed. The product, downloaded picture and retry status then live only in the running app's memory. Force quitting loses those consumed imports.
+Before Garms reads a shared link, its little inbox file stays on disk. After Garms takes ownership, that file is removed. The product, downloaded original, cutout and retry status then live only in the running app's memory. Force quitting loses those consumed imports.
 
 The App Group therefore acts as a temporary handoff, not a saved wardrobe. This matches the agreed prototype scope.
 
@@ -113,3 +119,20 @@ The App Group therefore acts as a temporary handoff, not a saved wardrobe. This 
 Start with `CanvasScreen.swift` to see when the feature runs and what buttons it exposes. Then read `ImportCoordinator.swift` to follow the sequence of work, and `CanvasSession.swift` to see how stickers are inserted and updated. Read `web/lib/import-product.ts` for what happens when the server receives a link. The remaining files support those four.
 
 You may also see changes to `CanvasOverlayView.swift`, `ContentView.swift`, or the `Garms.xcscheme` file in your working tree. Those were separate edits present before or during this work; they are not part of the import implementation described here.
+
+## Background-removal verification
+
+On 26 September 2026, the unsigned iOS 26.2 SDK build compiled the new Vision worker
+in the app and embedded the unchanged share extension. Import session, foreground
+cutout, initial-layout, search and availability checks passed. Magnetic drag still
+fails its existing line 86 cancellation assertion. `ForegroundCutoutChecks.swift`
+uses controlled continuations and synthetic alpha-bearing artwork; it tests state,
+ownership and rendering boundaries, not Vision detection accuracy. See the README
+for commands and device validation status. No backend or share-extension code changed.
+
+A signed Debug smoke run on iPhone 17 Pro / iOS 26.6.2 exercised the production Vision
+worker on a person, a shoe, an already-transparent cutout and two separated shoes.
+All returned alpha PNGs in 0.120–0.257 seconds per image; retrieved outputs kept both
+shoes and their transparent gap. Some source-white edge halos remained. The normal
+app was restored after this temporary offline validation build. The README records
+individual timings and outstanding manual share-sheet/UI acceptance scenarios.

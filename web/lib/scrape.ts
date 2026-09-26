@@ -1,5 +1,5 @@
 import { Firecrawl, SdkError, type Document } from "firecrawl";
-import { classifyProduct, MAX_CONTENT_LENGTH, MODEL } from "./product-availability";
+import { availabilityErrorMessage, classifyProduct, HIDDEN_CONTENT_SELECTORS, MAX_CONTENT_LENGTH, MODEL } from "./product-availability";
 import { createScrapeCache } from "./scrape-cache";
 
 export type ScrapeResult = {
@@ -12,29 +12,39 @@ export type ScrapeResult = {
 };
 
 type Classification = {
-  status: "out_of_stock" | "sold" | "listing_ended" | "removed" | "available" | "unknown";
+  status: "unknown" | "available" | "sold";
   error: string | null;
   model: string;
 };
 
-async function classifyMarkdown(
-  markdown: string, url: string, statusCode: number | null, classify: typeof classifyProduct,
+async function classifyContent(
+  content: string, url: string, statusCode: number | null, classify: typeof classifyProduct,
 ): Promise<Classification> {
   const unknown = (error: string): Classification => ({ status: "unknown", error, model: MODEL });
   if (statusCode != null && statusCode >= 400 && ![404, 410].includes(statusCode)) {
     return unknown("The source page could not be accessed. Try checking again later.");
   }
-  if (markdown.length > MAX_CONTENT_LENGTH) {
+  if (!content.trim()) return unknown("The page does not provide usable product availability evidence.");
+  if (content.length > MAX_CONTENT_LENGTH) {
     return unknown("The page is too large to classify. Its Markdown is still available.");
   }
   try {
-    const answer = await classify(markdown, url, statusCode);
-    if (answer.choice === "unreadable" || (statusCode != null && statusCode >= 400 && answer.choice === "available")) {
+    const answer = await classify(content, url, statusCode);
+    if (answer.choice === "unknown" || (statusCode != null && statusCode >= 400 && answer.choice === "available")) {
       return unknown("The page does not provide clear product availability information.");
     }
     return { status: answer.choice, error: null, model: MODEL };
-  } catch {
-    return unknown("Availability could not be classified. Please retry or check the server's AI Gateway configuration.");
+  } catch (error) {
+    let message = error instanceof Error ? error.message : "Unknown provider error";
+    for (const secret of [process.env.AI_GATEWAY_API_KEY, process.env.VERCEL_OIDC_TOKEN]) {
+      if (secret) message = message.replaceAll(secret, "[redacted]");
+    }
+    console.error("jev error", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      message,
+      statusCode: error && typeof error === "object" && "statusCode" in error ? error.statusCode : undefined,
+    });
+    return unknown(availabilityErrorMessage(error));
   }
 }
 
@@ -45,7 +55,10 @@ async function scrapePage(url: string, apiKey?: string): Promise<Document> {
     maxRetries: 1,
   });
   return client.scrape(url, {
-    formats: ["markdown"], onlyMainContent: true,
+    formats: ["markdown"],
+    // Main-content filtering can omit the product details and purchase state.
+    onlyMainContent: false,
+    excludeTags: HIDDEN_CONTENT_SELECTORS,
     maxAge: 0, timeout: 45_000, autoResume: false,
   });
 }
@@ -93,18 +106,24 @@ export function createScrapeHandler(
     try {
       if (request.signal.aborted) return json({ error: "Scrape cancelled." }, 499);
       const cached = await cache?.get(url.href);
-      console.log('using cache?', cached?.classification.status)
-      if (cached) return json(cached);
+      console.log("using cache?", cached?.classification.status);
+      if (cached) {
+        console.log("markdown", cached.markdown);
+        console.log("cached classification", cached.classification);
+        return json(cached);
+      }
       const result = await scrape(url.href, apiKey);
       const markdown = result?.markdown;
-      console.log('markdown', markdown)
+      console.log("markdown", markdown);
+      console.log("result", result);
       if (typeof markdown !== "string" || !markdown.trim()) {
         return json({ error: "This page returned no Markdown content." }, 422);
       }
       const metadata = result?.metadata;
       const statusCode = typeof metadata?.statusCode === "number" ? metadata.statusCode : null;
       if (request.signal.aborted) return json({ error: "Scrape cancelled." }, 499);
-      const classification = await classifyMarkdown(markdown, url.href, statusCode, classify);
+      const classification = await classifyContent(markdown, url.href, statusCode, classify);
+      console.log("classification", classification);
 
       const response: ScrapeResult = {
         url: url.href,

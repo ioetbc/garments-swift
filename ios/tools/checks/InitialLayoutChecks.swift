@@ -18,9 +18,8 @@ import CoreGraphics
                 index.rebuild(document)
                 let retained = CanvasProximity.groups(document:document,index:index,previous:groups)
                 precondition(Set(retained.map { Set($0) }) == Set(groups.map { Set($0) }), "Seeded groups must survive refresh")
-                let frame = CGRect(origin:.zero,size:viewport)
                 for item in document.placements.values {
-                    precondition(frame.contains(item.bounds), "Items must fit the initial viewport")
+                    precondition(abs(max(item.width, item.height) - CanvasConfiguration.initialImageEdge) < 0.0001, "Fixtures must match the initial import size")
                     let product = document.products[item.productID]!
                     precondition(abs(item.width/item.height-product.aspect) < 0.0001)
                     for other in document.placements.values where other.id != item.id {

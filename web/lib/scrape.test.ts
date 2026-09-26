@@ -9,7 +9,7 @@ const createHandler = (...args: [Parameters<typeof createCachedHandler>[0], Para
 
 // All model calls are injected: these tests never consume paid API credits.
 const createScrapeHandler = (scrape: Parameters<typeof createHandler>[0]) =>
-  createHandler(scrape, async () => ({ type: "choice" as const, choice: "removed" as const }));
+  createHandler(scrape, async () => ({ type: "choice" as const, choice: "sold" as const }));
 
 function request(body: unknown) {
   return new Request("http://localhost/api/scrape", {
@@ -34,7 +34,7 @@ test("returns Markdown and target status with fresh server-authenticated scrapin
       calls++;
       assert.equal(url, "https://example.com/item");
       assert.equal(apiKey, "test-key");
-      return { markdown: "# Removed", metadata: { title: "Item", statusCode: 404 } };
+      return { markdown: "# Sold", metadata: { title: "Item", statusCode: 404 } };
     });
     const response = await handler(request({ url: "https://example.com/item#details" }));
     assert.equal(response.status, 200);
@@ -42,7 +42,7 @@ test("returns Markdown and target status with fresh server-authenticated scrapin
     assert.ok(Number.isFinite(Date.parse(body.updatedAt)));
     const { updatedAt, ...result } = body;
     void updatedAt;
-    assert.deepEqual(result, { url: "https://example.com/item", markdown: "# Removed", title: "Item", statusCode: 404, classification: { status: "removed", error: null, model: MODEL } });
+    assert.deepEqual(result, { url: "https://example.com/item", markdown: "# Sold", title: "Item", statusCode: 404, classification: { status: "sold", error: null, model: MODEL } });
     assert.equal(calls, 1);
     for (const [upstream, expected] of [[401, 503], [402, 503], [429, 429], [500, 502], [408, 504]]) {
       const failing = createScrapeHandler(async () => { throw new SdkError("private error", upstream); });
@@ -68,7 +68,7 @@ test("returns Markdown and target status with fresh server-authenticated scrapin
 
 
 test("passes Markdown, URL and source status directly to Jev and returns every usable class", async () => {
-  for (const choice of ["sold", "out_of_stock", "listing_ended", "removed", "available"] as const) {
+  for (const choice of ["sold", "available"] as const) {
     const handler = createHandler(
       async () => ({ markdown: "# Jacket\nSold", metadata: { statusCode: 200 } }),
       async (content, url, code) => {
@@ -87,7 +87,7 @@ test("passes Markdown, URL and source status directly to Jev and returns every u
 test("keeps Markdown when classification fails or the page is unreadable", async () => {
   for (const classify of [
     async () => { throw new Error("private provider details"); },
-    async () => ({ type: "choice" as const, choice: "unreadable" as const }),
+    async () => ({ type: "choice" as const, choice: "unknown" as const }),
   ]) {
     const response = await createHandler(async () => ({ markdown: "# Page" }), classify)(request({ url: "https://example.com/item" }));
     assert.equal(response.status, 200);
@@ -121,5 +121,42 @@ test("does not report a missing resource as active even if the model does", asyn
       async () => ({ type: "choice" as const, choice: "available" as const }),
     )(request({ url: "https://example.com/item" }));
     assert.equal((await response.json()).classification.status, "unknown");
+  }
+});
+
+test("uses Markdown as classifier input even when a scrape also contains HTML", async () => {
+  const markdown = "# Jil Sander boots\nBuy now";
+  const handler = createHandler(
+    async () => ({ markdown, html: '<span class="u-visually-hidden">Removed!</span>' }),
+    async content => {
+      assert.equal(content, markdown);
+      return { type: "choice", choice: "available" };
+    },
+  );
+  const body = await (await handler(request({ url: "https://example.com/item" }))).json();
+  assert.equal(body.markdown, markdown);
+  assert.equal(body.classification.status, "available");
+});
+
+test("returns actionable classification failure reasons while preserving Markdown", async () => {
+  const cases = [
+    [new Error("The upstream provider is currently experiencing high demand. Please retry shortly."), /high demand/],
+    [Object.assign(new Error("private response"), { statusCode: 429 }), /rate-limiting/],
+    [Object.assign(new Error("private response"), { statusCode: 401 }), /authenticate/],
+    [new Error("Missing AI Gateway credentials"), /credentials/],
+    [new DOMException("aborted", "TimeoutError"), /timed out/],
+    [Object.assign(new Error("private response"), { statusCode: 503 }), /temporarily unavailable/],
+    [new Error("fetch failed"), /connect/],
+    [new Error("private response"), /failed unexpectedly/],
+  ] as const;
+  for (const [failure, expected] of cases) {
+    const handler = createHandler(async () => ({ markdown: "# Next top" }), async () => { throw failure; });
+    const response = await handler(request({ url: "https://example.com/item" }));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.markdown, "# Next top");
+    assert.equal(body.classification.status, "unknown");
+    assert.match(body.classification.error, expected);
+    assert.doesNotMatch(body.classification.error, /private response/);
   }
 });

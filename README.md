@@ -74,6 +74,37 @@ links with Retry and Dismiss. Dismiss removes that imported sticker. Exact URLs
 are deduplicated within the session, preserving size/variant queries and fragments.
 A missing or rejected image leaves the linked placeholder available for retry.
 
+For repeatable imports without the share sheet, edit `ImportConstants.testLinks` in
+`ios/Garms/Imports/ImportConstants.swift`, rebuild, then open **Imports** and tap **Import this link** beneath one URL. This runs the real API fetch, image download and background removal and
+adds the results to the canvas. The API server and Firecrawl configuration are
+still required. Test-link buttons are disabled while an import is queued or processing and for
+links already in Imports; dismiss an import to run that link again. Test links are allowed to match bundled canvas fixtures so
+they still exercise processing. They remain session-only, like shared imports.
+
+After downloading the first photo, Garms immediately shows the original, downloads
+the remaining gallery photos, then removes the first photo's background
+with Apple's Vision foreground-instance request in the main app, off the UI thread.
+All detected subjects stay together in one cropped transparent sticker. The original
+is the orientation-normalised image bounded to 2,048 pixels, and remains available
+beside the labelled Cutout in product details. Canvas and group thumbnails use the
+cutout. Position, current longest edge and stacking order survive replacement.
+The product drawer carousel shows the cutout, its original, and the remaining
+listing photos in order. Secondary photos keep their backgrounds; failed secondary
+downloads are logged and skipped without failing the import. Interrupted downloads
+resume from the pending photo without duplicating photos already saved.
+
+The Imports sheet shows “Removing background…” during extraction. If extraction
+fails or finds no usable foreground, the original stays visible and the import
+finishes Ready with “Background kept” and the specific reason. Inactivity pauses work; returning resumes
+extraction from the original without repeating the download. All image assets live
+in session memory, survive drawing-cache eviction, and are released when no product
+references them. “Retry background removal” retries a retained original without
+fetching the listing or downloading its image again. Garment-only extraction is not supported.
+Vision internal inference errors get one retry using a supported GPU, with both
+attempts recorded in the import log. Simulator logs identify the runtime explicitly;
+if inference cannot initialise there, verify extraction on a physical iPhone.
+
+
 The app and embedded `GarmsShare` extension both use App Group
 `group.f.garment-swift-2.imports`. In Xcode, select your development team for both
 targets, register/enable that App Group for `f.garment-swift-2` and
@@ -84,7 +115,18 @@ signed build on an iPhone; an unsigned build cannot validate App Group access or
 Share Sheet activation. Garms may need enabling under the Share Sheet's **More**.
 
 Configure `FIRECRAWL_API_KEY` in the server's environment. `POST /api/import`
-returns the submitted URL, nullable title and nullable HTTPS Open Graph image URL.
+returns the submitted URL, nullable title, nullable HTTPS `imageURL`, and an ordered,
+deduplicated `imageURLs` gallery. `imageURL` remains the first entry for older clients.
+Image selection prefers Open Graph metadata, then Twitter image metadata and raw
+HTML social tags, with a first-listing-photo fallback for Vinted UK. Every candidate
+must be an absolute public HTTPS URL without credentials; arbitrary page images
+(such as avatars, logos and recommendations) are not used.
+The gallery includes matching Product JSON-LD images and, for Vinted UK, the full
+embedded listing photo array (including photos hidden behind “+ more”). If only a
+social image is available, the gallery contains that single image.
+For SSENSE, the importer uses rendered images matching the current product SKU,
+orders them by photo number, and excludes the unexpanded `__IMAGE_PARAMS__` URL
+in its structured data. Different sizes of the same photo appear only once.
 It does not run availability classification or use the availability cache. Use
 the physical-device API address instructions above; the extension needs no API
 configuration. Imported prices are unknown, and group totals identify known-price
@@ -123,16 +165,70 @@ Run UIKit/session and existing canvas checks on an Apple Silicon Mac with Xcode
 
 ```sh
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/ImportSessionChecks.swift
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/ForegroundCutoutChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/AvailabilityChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/InitialLayoutChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/SearchChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/MagneticDragChecks.swift
 ```
 
-The import checks inject temporary inbox directories and API/image state; they
+The import checks inject temporary inbox directories and API/image/cutout state; they
 cover layout gating, deduplication, malformed records, failed acknowledgement,
 pause/resume, explicit retries, stale results, geometry preservation and source
 artwork surviving derived-cache clearing. Backend checks run with `cd web && bun test`;
 also run `bunx tsc --noEmit`, `bun run lint` and `bun run build`. In environments
 where Turbopack cannot bind its worker port, `bun run build --webpack` provides a
 production route-integration check.
+
+Background-removal validation (26 September 2026): `ImportSessionChecks`,
+`ForegroundCutoutChecks`, `InitialLayoutChecks`, `SearchChecks` and
+`AvailabilityChecks` passed, as did the unsigned iOS app/extension build using
+`xcodebuild -project ios/Garms.xcodeproj -scheme Garms -destination 'generic/platform=iOS' -derivedDataPath /tmp/garms-ios-build CODE_SIGNING_ALLOWED=NO build`.
+The magnetic-drag check still fails at its documented line 86 cancellation assertion.
+The new checks cover original publication, successful replacement, fallback,
+cancellation-insensitive extraction, resume without network repetition, late results
+after deletion/dismissal, shared asset ownership, and alpha-aware hit testing.
+They inject extraction results and do not establish Vision segmentation quality.
+
+A signed Debug build also passed and was installed on the connected **iPhone 17 Pro,
+iOS 26.6.2**. A temporary offline validation screen called the production worker on
+bounded bundled images, then the normal app build was restored. Measured single-run
+worker times (including decode/PNG encoding, excluding download) were:
+
+| Case | Time | Output |
+| --- | --- | --- |
+| Person wearing a beige shirt | 0.257 s | 816 × 2,048 PNG |
+| Red shoe | 0.137 s | 1,600 × 934 PNG |
+| That cutout used as already-transparent input | 0.135 s | 1,600 × 934 PNG |
+| Two separated copies of the shoe on white | 0.120 s | 1,520 × 897 PNG |
+
+The retrieved outputs preserved the person, both separated shoes and the transparent
+gap. They contained fully transparent and partially transparent pixels. Visual
+inspection found some white edge halos from the source background; no border was
+added by Garms. These four runs are smoke checks, not a performance benchmark.
+Flat clothing and difficult backgrounds still need real-image coverage. Safari/Vinted
+sharing, details updating while open, thumbnails, physical touch-through, pan/zoom
+responsiveness and actual background/reactivation remain manual acceptance checks;
+the relevant state/alpha boundaries were checked deterministically on Catalyst.
+
+### Import diagnostics
+
+Each Imports entry includes an expandable **Processing log** and **Copy log** button.
+The copied report includes the product URL, import ID, timestamps, server Firecrawl
+request ID, markdown length, metadata/image selection, image download/decode,
+Vision background removal, canvas installation, retries and pause/resume events.
+Failures retain their descriptions, domains, codes and underlying error details.
+“Background kept” means the original was retained because no usable cutout could
+be produced or installed; the warning now explains why. Logs remain in session
+memory (up to 300 entries per import) and are also emitted to the iOS console.
+Server extraction logs appear in the API terminal and are returned to the app on
+success and failure. Server logs omit page contents and redact provider keys and
+URLs in provider errors. Restart the API and rebuild the app for full diagnostics.
+
+Use **Send log to Mac** on an import to send its current report to
+`POST /api/import/diagnostics`. The terminal running the configured API server
+prints it between `GARMS IMPORT LOG FROM PHONE` / `END GARMS IMPORT LOG` markers.
+The app confirms delivery or displays the send error. This works through the same
+API base URL/tunnel as product imports and does not depend on Universal Clipboard.
+**Copy log** still copies locally on the phone. Reports include the product URL
+and are sent only when you press the button (256 KB maximum).

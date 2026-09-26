@@ -1,4 +1,4 @@
-import { classifyProduct, extractPageContent, MAX_CONTENT_LENGTH, MODEL } from "@/lib/product-availability";
+import { availabilityErrorMessage, classifyProduct, extractPageContent, MAX_CONTENT_LENGTH, MODEL } from "@/lib/product-availability";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -61,16 +61,13 @@ export async function POST(request: Request) {
 
   try {
     const answer = await classifyProduct(content, url);
-    if (answer.choice === "unreadable") {
-      return json({ error: "The page does not provide usable product availability evidence." }, 422);
-    }
     return json({
       status: answer.choice,
-      available: answer.choice === "available",
+      available: answer.choice === "unknown" ? null : answer.choice === "available",
       confidence: answer.probabilities?.[answer.choice] ?? null,
       model: MODEL,
     });
-  } catch {
-    return json({ error: "Product classification failed. Please retry." }, 502);
+  } catch (error) {
+    return json({ error: availabilityErrorMessage(error) }, 502);
   }
 }

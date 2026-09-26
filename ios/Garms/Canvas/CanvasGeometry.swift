@@ -15,6 +15,7 @@ nonisolated struct WorldPoint: Codable, Equatable, Sendable {
 nonisolated enum CanvasConfiguration {
     static let zoom = 0.1...18.0
     static let edge = 1.0...8192.0
+    static let initialImageEdge = 150.0 // Screen points at insertion; world points for fixtures at zoom 1.
     static let cell = 512.0
     static let maxItemCells = 64
     static let maxQueryCells = 4096

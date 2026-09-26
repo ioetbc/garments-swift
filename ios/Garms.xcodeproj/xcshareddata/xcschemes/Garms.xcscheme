@@ -53,7 +53,7 @@
       <EnvironmentVariables>
          <EnvironmentVariable
             key = "GARMS_API_BASE_URL"
-            value = "https://db0b-83-98-34-6.ngrok-free.app"
+            value = "https://ed26-88-202-240-32.ngrok-free.app"
             isEnabled = "YES">
          </EnvironmentVariable>
       </EnvironmentVariables>

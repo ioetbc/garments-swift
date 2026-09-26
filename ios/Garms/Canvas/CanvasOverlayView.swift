@@ -14,8 +14,9 @@ import UIKit
 
     func updateTitles() {
         guard let session else { titles = []; return }
-        // Fade with the pinch itself; remove hidden titles from hit testing and VoiceOver.
-        let progress = min(1, max(0, (session.camera.zoom - 2.0) / 0.5))
+        // Show titles at the default zoom; fade out in the overview to avoid crowding.
+        // Remove hidden titles from hit testing and VoiceOver.
+        let progress = min(1, max(0, (session.camera.zoom - 0.5) / 0.25))
         titleOpacity = CGFloat(progress * progress * (3 - 2 * progress))
         guard titleOpacity > 0 else { titles = []; return }
         titles = (session.document.namedGroups ?? []).compactMap { group in

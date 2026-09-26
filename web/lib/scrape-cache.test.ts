@@ -24,7 +24,9 @@ test("persists results across handlers, skips both paid APIs until exactly one d
     const first = await (await handler()(request())).json();
     const files = await readdir(directory);
     assert.equal(files.length, 1);
-    assert.deepEqual(JSON.parse(await readFile(path.join(directory, files[0]), "utf8")), first);
+    const { cacheVersion, ...stored } = JSON.parse(await readFile(path.join(directory, files[0]), "utf8"));
+    assert.equal(cacheVersion, 5);
+    assert.deepEqual(stored, first);
     now = Date.parse(first.updatedAt) + CACHE_TTL_MS - 1;
     assert.deepEqual(await (await handler()(request("https://example.com/item#details"))).json(), first);
     assert.equal(scrapes, 1);
@@ -52,12 +54,31 @@ test("corrupt files are refreshed; unknown results and upstream failures are not
     assert.equal(await cache.get("https://example.com/item"), null);
     assert.equal((await success(request())).status, 200);
     assert.equal((await cache.get("https://example.com/item"))?.classification.status, "available");
-    const unknown = createScrapeHandler(async () => ({ markdown: "Login" }), async () => ({ type: "choice", choice: "unreadable" }), cache);
+    const unknown = createScrapeHandler(async () => ({ markdown: "Login" }), async () => ({ type: "choice", choice: "unknown" }), cache);
     assert.equal((await unknown(request("https://example.com/unknown"))).status, 200);
     assert.equal(await cache.get("https://example.com/unknown"), null);
     const failed = createScrapeHandler(async () => { throw new Error("upstream"); }, undefined, cache);
     assert.equal((await failed(request("https://example.com/failed"))).status, 502);
     assert.equal((await readdir(directory)).length, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test("refreshes legacy cached classifications made from unfiltered Markdown", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "scrape-cache-"));
+  try {
+    const cache = createScrapeCache(directory);
+    const handler = createScrapeHandler(async () => ({ markdown: "Jacket" }), async () => ({ type: "choice", choice: "available" }), cache);
+    await handler(request());
+    const file = path.join(directory, (await readdir(directory))[0]);
+    const legacy = JSON.parse(await readFile(file, "utf8"));
+    delete legacy.cacheVersion;
+    legacy.classification.status = "removed";
+    await writeFile(file, JSON.stringify(legacy));
+    assert.equal(await cache.get(legacy.url), null);
+    assert.equal((await (await handler(request())).json()).classification.status, "available");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

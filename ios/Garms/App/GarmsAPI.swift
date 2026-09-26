@@ -72,29 +72,42 @@ enum GarmsAPI {
         let error: String?
 
         var isUnavailable: Bool {
-            ["out_of_stock", "sold", "listing_ended", "removed"].contains(status)
+            status == "sold"
         }
 
         var label: String {
-            switch status {
-            case "out_of_stock": "Out of stock"
+            if let error, !error.isEmpty { return "Couldn’t check" }
+            return switch status {
             case "sold": "Sold"
-            case "listing_ended": "Auction / listing ended"
-            case "removed": "Removed"
-            case "available": "Active"
+            case "available": "Available"
             default: "Unknown"
             }
         }
     }
 
     private struct ScrapeRequest: Encodable { let url: String }
-    private struct ErrorResponse: Decodable { let error: String }
+    private struct ErrorResponse: Decodable { let error: String; var diagnostics: [String]? = nil }
 
     struct ImportedProduct: Decodable, Sendable {
         let url: String
         let title: String?
         let imageURL: String?
+        var imageURLs: [String]? = nil
+        var diagnostics: [String]? = nil
     }
+    static func sendImportLog(_ report: String) async throws {
+        var request = URLRequest(url: try baseURL().appendingPathComponent("api/import/diagnostics"), timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("text/plain; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(report.utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let response = response as? HTTPURLResponse else { throw ConnectionError.invalidResponse }
+        guard response.statusCode == 200 else {
+            let error = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            throw ConnectionError.message("Send log failed (HTTP \(response.statusCode)): " + (error?.error ?? "Unexpected server response."))
+        }
+    }
+
     static func importProduct(url: String) async throws -> ImportedProduct {
         _ = try SharedLink.normalized(url)
         var request = URLRequest(url: try baseURL().appendingPathComponent("api/import"), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 60)
@@ -104,7 +117,9 @@ enum GarmsAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw ConnectionError.invalidResponse }
         guard response.statusCode == 200 else {
-            throw ConnectionError.message((try? JSONDecoder().decode(ErrorResponse.self, from: data).error) ?? "Import failed. Please retry.")
+            let failure = try? JSONDecoder().decode(ErrorResponse.self, from: data)
+            let details = (["Import API HTTP \(response.statusCode): " + (failure?.error ?? "Unexpected server response.")] + (failure?.diagnostics ?? [])).joined(separator: "\n")
+            throw ConnectionError.message(details)
         }
         return try JSONDecoder().decode(ImportedProduct.self, from: data)
     }

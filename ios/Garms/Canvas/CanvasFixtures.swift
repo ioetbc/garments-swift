@@ -28,13 +28,14 @@ nonisolated enum CanvasFixtures {
         for i in 0..<max(0,count) {
             let product = products[i % products.count]
             let p = StickerPlacement(id: "seed-\(i)", productID: product.id,
-                center: .init(), width: 340*min(1,product.aspect), height: 340/max(1,product.aspect))
+                center: .init(), width: CanvasConfiguration.initialImageEdge * min(1, product.aspect),
+                height: CanvasConfiguration.initialImageEdge / max(1, product.aspect))
             d.placements[p.id] = p; d.order.append(p.id)
         }
         return d
     }
 
-    /// Small, repeatable compositions with generous space between each collection.
+    /// Repeatable compositions at the same initial size as imported images.
     /// Returns intentional memberships so proximity cannot merge neighbouring clusters.
     @discardableResult
     static func fit(_ document: inout CanvasDocument, viewport: CGSize) -> [[String]] {
@@ -54,12 +55,12 @@ nonisolated enum CanvasFixtures {
             for index in cluster.indices {
                 if index == topCount { x = clusters.count.isMultiple(of: 2) ? 18 : 0 }
                 let aspect = cluster[index].width / cluster[index].height
-                let height = 210.0 - Double((index + clusters.count) % 3) * 18
-                cluster[index].height = min(height, 156 / aspect)
+                let edge = CanvasConfiguration.initialImageEdge
+                cluster[index].height = edge / max(1, aspect)
                 cluster[index].width = cluster[index].height * aspect
                 cluster[index].center = .init(
                     x: x + cluster[index].width / 2,
-                    y: index < topCount ? 210 - cluster[index].height / 2 : 226 + cluster[index].height / 2)
+                    y: index < topCount ? edge - cluster[index].height / 2 : edge + 16 + cluster[index].height / 2)
                 x += cluster[index].width + 16
             }
             clusters.append(cluster)
@@ -103,18 +104,14 @@ nonisolated enum CanvasFixtures {
                 x: (scattered.map { $0.maxX }.max() ?? 0) + gap,
                 y: randomUnit() * fieldHeight, width: local.width, height: local.height))
         }
-        let extent = scattered.reduce(CGRect.null) { $0.union($1) }
-        // Never enlarge the resting gaps beyond the grouping distance.
-        let scale = min(1, availableWidth / extent.width, availableHeight / extent.height)
-        let originX = (viewport.width - extent.width * scale) / 2
-        let originY = (viewport.height - extent.height * scale) / 2
+        // Open on the first collection without shrinking the whole canvas to the viewport.
+        let originX = viewport.width / 2 - scattered[0].midX
+        let originY = viewport.height / 2 - scattered[0].midY
         for (number, cluster) in clusters.enumerated() {
             for var placement in cluster {
                 placement.center = .init(
-                    x: originX + (scattered[number].minX - extent.minX + placement.center.x - bounds[number].minX) * scale,
-                    y: originY + (scattered[number].minY - extent.minY + placement.center.y - bounds[number].minY) * scale)
-                placement.width *= scale
-                placement.height *= scale
+                    x: originX + scattered[number].minX + placement.center.x - bounds[number].minX,
+                    y: originY + scattered[number].minY + placement.center.y - bounds[number].minY)
                 document.placements[placement.id] = placement
             }
         }

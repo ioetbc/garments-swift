@@ -10,6 +10,13 @@ nonisolated struct SampleProduct: Codable, Equatable, Identifiable, Sendable {
     var product_url: String
 
     // Sample pricing until saved listing prices are available.
+    var originalAsset: String? = nil
+    var galleryAssets: [String]? = nil
+    var detailAssets: [String] {
+        var seen: Set<String> = []
+        return ([asset, originalAsset].compactMap { $0 } + (galleryAssets ?? [])).filter { seen.insert($0).inserted }
+    }
+    var referencedAssets: Set<String> { Set(detailAssets) }
     var isImported: Bool? = nil
     var price: Decimal? { isImported == true ? nil : 250 }
 

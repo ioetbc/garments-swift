@@ -146,7 +146,7 @@ import Observation
             imports.deleted(id)
             let used = Set(document.placements.values.map(\.productID))
             document.products = document.products.filter { $0.value.isImported != true || used.contains($0.key) }
-            importedAssets.retain(Set(document.products.values.map(\.asset)))
+            pruneImportedAssets()
         }
     }
     func complete(_ before: CanvasDocument) {
@@ -160,35 +160,60 @@ import Observation
         if let placement = document.placements[id] { camera.center = placement.center }
         select(id)
     }
-    func insertImport(_ record: SharedImport) -> String? {
-        guard hasInitialLayout else { return nil }
+    func insertImport(_ record: SharedImport, artwork: ImportedImageDownload.Artwork) -> String? {
+        guard hasInitialLayout, artwork.aspect.isFinite, artwork.aspect > 0 else { return nil }
         resolveInteraction?()
         let before = document
         let productID = UUID().uuidString
-        let asset = importedAssets.placeholder()
-        let product = SampleProduct(id: productID, title: record.suggestedTitle ?? URL(string: record.url)?.host ?? "Saved link", category: "", asset: asset, aspect: 300.0 / 220.0, product_url: record.url, isImported: true)
-        let edge = min(CanvasConfiguration.edge.upperBound, max(CanvasConfiguration.edge.lowerBound, 150 / camera.zoom))
+        let asset = importedAssets.insert(artwork.data)
+        let product = SampleProduct(id: productID, title: record.suggestedTitle ?? URL(string: record.url)?.host ?? "Saved link", category: "", asset: asset, aspect: artwork.aspect, product_url: record.url, isImported: true)
+        let edge = min(CanvasConfiguration.edge.upperBound, max(CanvasConfiguration.edge.lowerBound, CanvasConfiguration.initialImageEdge / camera.zoom))
         let offset = Double(document.products.values.filter { $0.isImported == true }.count % 5) * 18 / camera.zoom
-        let placement = StickerPlacement(productID: productID, center: camera.center + WorldPoint(x: offset, y: offset), width: edge, height: edge / product.aspect)
+        let placement = StickerPlacement(productID: productID, center: camera.center + WorldPoint(x: offset, y: offset), width: product.aspect >= 1 ? edge : edge * product.aspect, height: product.aspect >= 1 ? edge / product.aspect : edge)
         document.products[productID] = product
         document.placements[placement.id] = placement
         document.order.append(placement.id)
         complete(before)
-        guard document.placements[placement.id] != nil else { importedAssets.retain(Set(document.products.values.map(\.asset))); return nil }
+        guard document.placements[placement.id] != nil else { pruneImportedAssets(); return nil }
         searchQuery = ""
         select(placement.id)
         return placement.id
     }
-    func updateImport(_ id: String, title: String?, artwork: ImportedImageDownload.Artwork?) {
-        guard var placement = document.placements[id], var product = document.products[placement.productID] else { return }
+    private func pruneImportedAssets() {
+        importedAssets.retain(Set(document.products.values.flatMap { $0.referencedAssets }))
+    }
+    @discardableResult
+    func appendImportPhoto(_ id: String, artwork: ImportedImageDownload.Artwork) -> String? {
+        guard let placement = document.placements[id], var product = document.products[placement.productID],
+              artwork.aspect.isFinite, artwork.aspect > 0 else { return nil }
+        let before = document
+        let asset = importedAssets.insert(artwork.data)
+        product.galleryAssets = (product.galleryAssets ?? []) + [asset]
+        document.products[product.id] = product
+        complete(before)
+        pruneImportedAssets()
+        return document.products[product.id] == product ? asset : nil
+    }
+    @discardableResult
+    func installImportOriginal(_ id: String, title: String?, artwork: ImportedImageDownload.Artwork) -> String? {
+        updateImport(id, title: title, artwork: artwork, original: true)
+    }
+    @discardableResult
+    func applyImportCutout(_ id: String, artwork: ImportedImageDownload.Artwork) -> String? {
+        guard let placement = document.placements[id], document.products[placement.productID]?.originalAsset != nil else { return nil }
+        return updateImport(id, title: nil, artwork: artwork, original: false)
+    }
+    @discardableResult
+    func updateImport(_ id: String, title: String?, artwork: ImportedImageDownload.Artwork?, original: Bool = true) -> String? {
+        guard document.placements[id] != nil else { return nil }
         resolveInteraction?()
-        // Interaction resolution can commit a newer placement; use that geometry.
-        guard let current = document.placements[id] else { return }
-        placement = current
+        guard var placement = document.placements[id], var product = document.products[placement.productID] else { return nil }
+        if let artwork { guard artwork.aspect.isFinite, artwork.aspect > 0 else { return nil } }
         let before = document
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { product.title = title }
         if let artwork {
             product.asset = importedAssets.insert(artwork.data)
+            if original { product.originalAsset = product.asset }
             product.aspect = artwork.aspect
             let edge = max(placement.width, placement.height)
             placement.width = artwork.aspect >= 1 ? edge : edge * artwork.aspect
@@ -197,7 +222,8 @@ import Observation
         document.products[product.id] = product
         document.placements[id] = placement
         complete(before)
-        importedAssets.retain(Set(document.products.values.map(\.asset)))
+        pruneImportedAssets()
+        return document.products[product.id] == product ? product.asset : nil
     }
     // These also provide non-gesture equivalents for VoiceOver.
     func nudge(x: Double, y: Double) {

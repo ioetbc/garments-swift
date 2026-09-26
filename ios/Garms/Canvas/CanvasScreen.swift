@@ -5,6 +5,8 @@ struct CanvasScreen: View {
     @State private var session = CanvasSession()
     @State private var statuses: [String: String] = [:]
     @State private var showingImports = false
+    @State private var sendingLogs: Set<UUID> = []
+    @State private var logDelivery: [UUID: String] = [:]
     @State private var searchExpanded = false
     @State private var groupPlacement: StickerPlacement?
     @Environment(\.scenePhase) private var phase
@@ -36,6 +38,14 @@ struct CanvasScreen: View {
                     }
                 }
         }
+            .overlay {
+                if session.imports.progress != nil {
+                    ImportViewportProgress()
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
             .sheet(item: Binding(
                 get: { session.inspectedPlacement },
                 set: { session.inspectedPlacement = $0 }
@@ -72,13 +82,56 @@ struct CanvasScreen: View {
             .sheet(isPresented: $showingImports) {
                 NavigationStack {
                     List {
-                        if session.imports.items.isEmpty { Text("Share a link, then open Garms to import it.") }
+                        Section("Test links") {
+                            ForEach(Array(ImportConstants.testLinks.enumerated()), id: \.offset) { _, url in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(url).lineLimit(2)
+                                    Button("Import this link", systemImage: "link.badge.plus") {
+                                        session.imports.loadTestLinks([url])
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(session.imports.items.contains {
+                                        $0.state == "Queued" || $0.state == "Processing" ||
+                                        (try? SharedLink.normalized($0.record.url)) == (try? SharedLink.normalized(url))
+                                    })
+                                }
+                            }
+                        }
+                        if session.imports.items.isEmpty { Text("Choose a test link or share a link to import it.") }
                         ForEach(session.imports.items) { item in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(item.record.url).lineLimit(2)
-                                Text(item.failure ?? item.state).font(.caption)
+                                Text(item.failure ?? (item.stage == .removingBackground && item.state == "Processing" ? "Removing background…" : item.note ?? item.state)).font(.caption)
+                                DisclosureGroup("Processing log") {
+                                    Text(item.logs.joined(separator: "\n"))
+                                        .font(.system(.caption, design: .monospaced))
+                                        .textSelection(.enabled)
+                                }
+                                Button(sendingLogs.contains(item.id) ? "Sending…" : "Send log to Mac", systemImage: "desktopcomputer") {
+                                    let id = item.id, report = item.diagnosticReport
+                                    sendingLogs.insert(id)
+                                    logDelivery[id] = nil
+                                    Task {
+                                        defer { sendingLogs.remove(id) }
+                                        do {
+                                            try await GarmsAPI.sendImportLog(report)
+                                            logDelivery[id] = "Sent — check the terminal running the API server."
+                                        } catch {
+                                            logDelivery[id] = ImportDiagnostics.describe(error)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(sendingLogs.contains(item.id))
+                                if let delivery = logDelivery[item.id] {
+                                    Text(delivery).font(.caption).textSelection(.enabled)
+                                }
                                 HStack {
+                                    Button("Copy log", systemImage: "doc.on.doc") {
+                                        UIPasteboard.general.string = item.diagnosticReport
+                                    }.buttonStyle(.bordered)
                                     if item.state == "Failed" { Button("Retry") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
+                                    if item.canRetryBackground { Button("Retry background removal") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
                                     Button("Dismiss", role: .destructive) { session.imports.dismiss(item.id) }.buttonStyle(.bordered)
                                 }
                             }
@@ -117,7 +170,8 @@ struct CanvasScreen: View {
             }, availability: session.classification(for: product), onAvailability: {
                 session.updateAvailability($0, productID: product.id)
             })
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.large])
+            .presentationBackground(.white)
             .presentationDragIndicator(.visible)
         }
     }
@@ -242,5 +296,42 @@ private struct CanvasGroupItemThumbnail: View {
             guard !Task.isCancelled else { return }
             thumbnail = image
         }
+    }
+}
+
+/// Resolve the device's corner geometry through SwiftUI, including at the trim seam.
+private struct ImportViewportProgress: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var started = Date()
+    private let lineWidth: CGFloat = 3
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                ConcentricRectangle()
+                    .stroke(.tint.opacity(0.7), lineWidth: lineWidth)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
+                    let phase = timeline.date.timeIntervalSince(started)
+                        .truncatingRemainder(dividingBy: 3.5) / 3.5
+                    let end = phase + 0.18
+                    ZStack {
+                        ConcentricRectangle()
+                            .trim(from: phase, to: min(end, 1))
+                            .stroke(.tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                        if end > 1 {
+                            ConcentricRectangle()
+                                .trim(from: 0, to: end - 1)
+                                .stroke(.tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                        }
+                    }
+                    .compositingGroup()
+                    .shadow(color: .accentColor.opacity(0.6), radius: 5)
+                }
+            }
+        }
+        // Inset only the stroke's centerline; its outside edge remains flush.
+        // ConcentricRectangle resolves the corresponding inset corner geometry.
+        .padding(lineWidth / 2)
     }
 }

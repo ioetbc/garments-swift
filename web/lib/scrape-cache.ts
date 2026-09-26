@@ -3,6 +3,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ScrapeResult } from "./scrape";
 
+// Bump when evidence extraction changes so stale classifications are refreshed.
+const CACHE_VERSION = 5;
+
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function createScrapeCache(
@@ -15,13 +18,15 @@ export function createScrapeCache(
       try {
         const entry = JSON.parse(await readFile(filename(url), "utf8"));
         const age = now() - Date.parse(entry.updatedAt);
-        if (!Number.isFinite(age) || age < 0 || age >= CACHE_TTL_MS ||
+        if (entry.cacheVersion !== CACHE_VERSION || !Number.isFinite(age) || age < 0 || age >= CACHE_TTL_MS ||
             entry.url !== url || typeof entry.markdown !== "string" || !entry.markdown.trim() ||
             !(entry.title === null || typeof entry.title === "string") ||
             !(entry.statusCode === null || typeof entry.statusCode === "number") ||
-            !["available", "sold", "out_of_stock", "listing_ended", "removed"].includes(entry.classification?.status) ||
+            !["available", "sold"].includes(entry.classification?.status) ||
             entry.classification.error !== null || typeof entry.classification.model !== "string") return null;
-        return entry as ScrapeResult;
+        const { cacheVersion, ...result } = entry;
+        void cacheVersion;
+        return result as ScrapeResult;
       } catch (error) {
         if (!(error instanceof SyntaxError) && (error as NodeJS.ErrnoException).code !== "ENOENT") {
           console.warn("Could not read scrape cache.", error);
@@ -35,7 +40,7 @@ export function createScrapeCache(
       const temporary = `${destination}.${randomUUID()}.tmp`;
       try {
         await mkdir(directory, { recursive: true });
-        await writeFile(temporary, JSON.stringify(result, null, 2), { encoding: "utf8", mode: 0o600 });
+        await writeFile(temporary, JSON.stringify({ ...result, cacheVersion: CACHE_VERSION }, null, 2), { encoding: "utf8", mode: 0o600 });
         await rename(temporary, destination);
       } catch (error) {
         // A disk failure must not discard an otherwise usable paid result.

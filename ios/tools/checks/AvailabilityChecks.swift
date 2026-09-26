@@ -16,6 +16,10 @@ import Foundation
     }
 
     @MainActor static func main() async {
+        let errorResult = GarmsAPI.ProductClassification(status: "unknown", error: "The availability provider is currently experiencing high demand. Please retry shortly.")
+        precondition(errorResult.label == "Couldn’t check")
+        precondition(!errorResult.isUnavailable)
+        precondition(GarmsAPI.ProductClassification(status: "unknown", error: nil).label == "Unknown")
         let session = CanvasSession()
         let requests = Requests()
         await session.loadAvailability { try await requests.fetch($0) }
@@ -33,11 +37,11 @@ import Foundation
         session.updateAvailability(.init(status: "available", error: nil), productID: product.id)
         precondition(session.classification(for: sharedURLProduct)?.status == "sold")
         precondition(session.classification(for: product)?.status == "available")
-        for status in ["out_of_stock", "sold", "listing_ended", "removed"] {
+        for status in ["sold"] {
             session.updateAvailability(.init(status: status, error: nil), productID: product.id)
             precondition(session.opacity(for: placement) == 0.35)
         }
-        for status in ["available", "unknown", "unexpected"] {
+        for status in ["available", "unknown", "unexpected", "out_of_stock", "listing_ended", "removed"] {
             session.updateAvailability(.init(status: status, error: nil), productID: product.id)
             precondition(session.opacity(for: placement) == 1)
         }
