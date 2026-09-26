@@ -10,3 +10,6 @@
 10. add notes to a group
 11. detect type e.g. shoes, shirt, dress etc.
 12. schema somehow malleable - does the schema dictate what we scrape?
+13. mini map?
+14. different pre-designed section backgrounds e.g. newly imported
+15. import from photos

@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import PencilKit
 
 @Observable @MainActor final class CanvasSession {
     @ObservationIgnored var document = CanvasFixtures.make()
@@ -16,11 +17,14 @@ import Observation
     @ObservationIgnored var resolveInteraction: (() -> Void)?
     @ObservationIgnored let importedAssets = ImportedAssetLibrary()
     @ObservationIgnored lazy var imports = ImportCoordinator(session: self)
+    let history = CanvasHistory()
     var revision = 0
     var selection: String?
     var inspectedPlacement: StickerPlacement?
     var inspectedGroup: CanvasNamedGroup?
     var error: String?
+    var isDrawing = false
+    @ObservationIgnored var inkDrawing = PKDrawing()
     private(set) var availability: [String: GarmsAPI.ProductClassification] = [:]
 
     func classification(for product: SampleProduct) -> GarmsAPI.ProductClassification? {
@@ -124,11 +128,13 @@ import Observation
     func updateGroup(_ id: String, name: String, backgroundColour: CanvasGroupColour?) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let index = document.namedGroups?.firstIndex(where: { $0.id == id }) else { return }
+        let before = snapshot()
         // Keep the last valid title while the field is cleared for replacement.
         if !trimmed.isEmpty { document.namedGroups?[index].name = String(trimmed.prefix(60)) }
         document.namedGroups?[index].backgroundColour = backgroundColour
-        updateSearchMatches()
-        render?()
+        refresh()
+        history.record(before: before, after: snapshot(), key: "group-" + id)
+        pruneImportedAssets()
     }
     func select(_ id: String?, showDetails: Bool = false) {
         selection = id
@@ -141,18 +147,59 @@ import Observation
         let before = document
         document.placements[id] = nil
         document.order.removeAll { $0 == id }
+        let used = Set(document.placements.values.map(\.productID))
+        document.products = document.products.filter { $0.value.isImported != true || used.contains($0.key) }
         complete(before)
-        if document.placements[id] == nil {
-            imports.deleted(id)
-            let used = Set(document.placements.values.map(\.productID))
-            document.products = document.products.filter { $0.value.isImported != true || used.contains($0.key) }
-            pruneImportedAssets()
-        }
+        if document.placements[id] == nil { imports.deleted(id) }
     }
-    func complete(_ before: CanvasDocument) {
+    func snapshot(document: CanvasDocument? = nil) -> CanvasSnapshot {
+        CanvasSnapshot(document: document ?? self.document, groups: committedGroups,
+                       detachedLinks: detachedLinks, ink: inkDrawing)
+    }
+    func complete(_ before: CanvasDocument, baseline: CanvasSnapshot? = nil, recordHistory: Bool = true) {
+        let previous = baseline ?? snapshot(document: before)
         do { try document.validate() }
-        catch { document = before; self.error = error.localizedDescription }
+        catch {
+            document = before
+            self.error = error.localizedDescription
+            refresh()
+            return
+        }
         refresh()
+        if recordHistory { history.record(before: previous, after: snapshot()) }
+        else { history.enrichImport(from: before, to: document) }
+        pruneImportedAssets()
+    }
+    func updateInk(_ drawing: PKDrawing, key: String? = nil) {
+        let before = snapshot()
+        inkDrawing = drawing
+        history.record(before: before, after: snapshot(), key: key)
+        pruneImportedAssets()
+    }
+    func undo() {
+        resolveInteraction?()
+        guard let state = history.undo() else { return }
+        restore(state)
+    }
+    func redo() {
+        resolveInteraction?()
+        guard let state = history.redo() else { return }
+        restore(state)
+    }
+    private func restore(_ state: CanvasSnapshot) {
+        for id in document.placements.keys where state.document.placements[id] == nil {
+            imports.deleted(id)
+        }
+        document = state.document
+        committedGroups = state.groups
+        detachedLinks = state.detachedLinks
+        elasticLink = nil
+        groupingPreview = nil
+        inkDrawing = state.ink
+        inspectedPlacement = nil
+        inspectedGroup = nil
+        refresh()
+        pruneImportedAssets()
     }
     func revealImport(_ id: String) {
         resolveInteraction?()
@@ -180,7 +227,7 @@ import Observation
         return placement.id
     }
     private func pruneImportedAssets() {
-        importedAssets.retain(Set(document.products.values.flatMap { $0.referencedAssets }))
+        importedAssets.retain(Set(document.products.values.flatMap { $0.referencedAssets }).union(history.referencedAssets))
     }
     @discardableResult
     func appendImportPhoto(_ id: String, artwork: ImportedImageDownload.Artwork) -> String? {
@@ -190,7 +237,7 @@ import Observation
         let asset = importedAssets.insert(artwork.data)
         product.galleryAssets = (product.galleryAssets ?? []) + [asset]
         document.products[product.id] = product
-        complete(before)
+        complete(before, recordHistory: false)
         pruneImportedAssets()
         return document.products[product.id] == product ? asset : nil
     }
@@ -221,7 +268,7 @@ import Observation
         }
         document.products[product.id] = product
         document.placements[id] = placement
-        complete(before)
+        complete(before, recordHistory: false)
         pruneImportedAssets()
         return document.products[product.id] == product ? product.asset : nil
     }

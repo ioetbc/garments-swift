@@ -45,6 +45,7 @@ import UIKit
     let renderer = CanvasRenderer()
     let overlay = CanvasOverlayView()
     let interaction: CanvasInteractionController
+    private let ink: CanvasInkView
     private let touchObserver = CanvasTouchObserver()
     private var firstPoint = CGPoint.zero
     private var secondTarget: String?
@@ -69,12 +70,15 @@ import UIKit
     private var titleAnimationDeadline: CFTimeInterval = 0
     private var previousTitleLiftedIDs: Set<String> = []
     init(session:CanvasSession) {
-        self.session = session; interaction = CanvasInteractionController(session:session); super.init(frame:.zero)
+        self.session = session; interaction = CanvasInteractionController(session:session)
+        ink = CanvasInkView(session: session)
+        super.init(frame:.zero)
         renderer.assets.library = session.importedAssets
         isMultipleTouchEnabled = true; clipsToBounds = true
         backgroundColor = .white
         layer.addSublayer(renderer.paperDots)
         layer.addSublayer(renderer.world); addSubview(overlay); overlay.session = session
+        addSubview(ink)
         overlay.displayedGroupBounds = { [weak self] group in
             guard let self else { return .null }
             return self.renderer.displayedGroupBounds(group, session: self.session)
@@ -92,6 +96,14 @@ import UIKit
         })
     }
     required init?(coder:NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func setDrawingEnabled(_ enabled: Bool) {
+        guard ink.isUserInteractionEnabled != enabled else { return }
+        cancelInteraction()
+        for recognizer in gestureRecognizers ?? [] { recognizer.isEnabled = !enabled }
+        multiTouch = false; waitForLift = false; pinchActive = false
+        ink.setDrawingEnabled(enabled)
+        updateAccessibility()
+    }
     private func configureGestures() {
         touchObserver.cancelsTouchesInView = false
         touchObserver.began = { [weak self] points in self?.touchesArrived(points) }
@@ -238,9 +250,10 @@ import UIKit
     override func layoutSubviews() {
         super.layoutSubviews()
         if session.viewport != bounds.size { cancelInteraction() }
-        overlay.frame = bounds; session.updateViewport(bounds.size); render()
+        overlay.frame = bounds; ink.frame = bounds; session.updateViewport(bounds.size); render()
     }
     func render() {
+        ink.updateCamera()
         renderer.reconcile(session:session,retained:interaction.retained,liftedIDs:interaction.liftedIDs,
                            displayScale:traitCollection.displayScale)
         if previousTitleLiftedIDs != interaction.liftedIDs {
@@ -328,6 +341,7 @@ import UIKit
     }
     func cancelInteraction() { stopEdgeScroll(); stopGlide(); interaction.cancel(); pinchActive = false; waitForLift = !touchObserver.touchesByID.isEmpty }
     private func updateAccessibility() {
+        if session.isDrawing { accessibilityElements = [ink]; return }
         let ids = session.document.order.filter { renderer.layers[$0] != nil }
         for id in Array(elements.keys) where !ids.contains(id) { elements[id] = nil }
         for id in ids {
@@ -355,6 +369,7 @@ import UIKit
         accessibilityElements = groupElements + ids.compactMap { elements[$0] }
     }
     func shutdown() {
+        ink.setDrawingEnabled(false)
         cancelInteraction(); settle?.cancel(); titleAnimationLink?.invalidate(); titleAnimationLink = nil; session.render = nil; session.resolveInteraction = nil
         for token in notificationTokens { NotificationCenter.default.removeObserver(token) }; notificationTokens.removeAll()
     }

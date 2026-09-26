@@ -223,7 +223,12 @@ import UIKit
         precondition(galleryProduct.detailAssets.count == 4 && Array(galleryProduct.detailAssets.dropFirst()) == originals)
         precondition(galleryProduct.detailAssets.allSatisfy { gallerySession.importedAssets.data(for: $0) != nil })
         gallery.dismiss(gallery.items[0].id)
-        precondition(galleryProduct.detailAssets.allSatisfy { gallerySession.importedAssets.data(for: $0) == nil })
+        // Deleted artwork remains available to undo until its history is evicted.
+        precondition(galleryProduct.detailAssets.allSatisfy { gallerySession.importedAssets.data(for: $0) != nil })
+        gallerySession.undo()
+        precondition(gallerySession.document.products[galleryProductID] == galleryProduct)
+        gallerySession.redo()
+        precondition(gallerySession.document.placements[galleryPlacement] == nil)
         // A cancelled secondary download resumes without downloading the primary again.
         let resumeSession = CanvasSession()
         resumeSession.updateViewport(CGSize(width: 390, height: 844))

@@ -9,7 +9,7 @@ import CoreGraphics
         let product = CanvasFixtures.products[0]
         let moving = StickerPlacement(id:"moving",productID:product.id,center:.init(),width:100,height:100)
         let target = StickerPlacement(id:"target",productID:product.id,center:.init(x:300),width:100,height:100)
-        let document = CanvasDocument(products:[product.id:product],placements:[moving.id:moving,target.id:target],order:[moving.id,target.id])
+        let document = CanvasDocument(namedGroups:[],products:[product.id:product],placements:[moving.id:moving,target.id:target],order:[moving.id,target.id])
         // Nearby stationary items must not group on load, during another drag, or on drop.
         let isolated = CanvasSession()
         var clustered = document
@@ -182,11 +182,12 @@ import CoreGraphics
             precondition(s.groups.count == 1 && s.detachedLinks.isEmpty, "Re-forming the pair must persist after release")
 
             s.document = d; s.committedGroups = [[moving.id,target.id]]; s.detachedLinks = []; s.refresh()
+            let beforeInwardDrag = s.document // Includes reconciled group names.
             drag.liftImage(moving.id,point:.zero,timestamp:0)
             drag.drag(point:CGPoint(x:movement*zoom,y:0),timestamp:movement*zoom/1200)
             precondition(s.groups.count == 1, "Fast inward movement must stay grouped")
             drag.cancel()
-            precondition(s.document == d && s.groups.count == 1 && s.detachedLinks.isEmpty)
+            precondition(s.document == beforeInwardDrag && s.groups.count == 1 && s.detachedLinks.isEmpty)
         }
         print("Magnetic drag checks passed")
     }

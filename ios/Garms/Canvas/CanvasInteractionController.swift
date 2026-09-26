@@ -9,6 +9,7 @@ import CoreGraphics
             if state != .idle { session.inspectedPlacement = nil }
         }
     }
+    private var historyBaseline: CanvasSnapshot?
     private var original: CanvasDocument?
     private var baseline: [StickerPlacement] = []
     private var start = WorldPoint()
@@ -28,6 +29,7 @@ import CoreGraphics
     init(session:CanvasSession) { self.session = session }
     private func beginObject(state:State, point:CGPoint) {
         if original == nil {
+            historyBaseline = session.snapshot()
             original = session.document
             originalGroups = session.committedGroups
             originalDetached = session.detachedLinks
@@ -55,6 +57,7 @@ import CoreGraphics
         guard items.count > 1 else { return }
         session.select(nil)
         originalGroups = session.committedGroups; originalDetached = session.detachedLinks
+        historyBaseline = session.snapshot()
         original = session.document; baseline = items; state = .groupDrag
         start = session.camera.world(point,viewport:session.viewport)
         session.render?()
@@ -258,8 +261,9 @@ import CoreGraphics
             session.committedGroups = session.groups
         }
         let before = original
+        let historyBefore = historyBaseline
         clear()
-        if let before { session.complete(before) }
+        if let before { session.complete(before, baseline: historyBefore) }
         else { session.render?() }
     }
     func cancel() {
@@ -271,5 +275,5 @@ import CoreGraphics
         else if state == .cameraPan || state == .cameraPinch { session.camera = cameraStart }
         clear(); session.refresh()
     }
-    private func clear() { session.elasticLink = nil; springRest = nil; dragSample = nil; releasedMembers = []; originalGroups = []; originalDetached = []; original = nil; baseline = []; magneticTarget = nil; session.groupingPreview = nil; state = .idle }
+    private func clear() { historyBaseline = nil; session.elasticLink = nil; springRest = nil; dragSample = nil; releasedMembers = []; originalGroups = []; originalDetached = []; original = nil; baseline = []; magneticTarget = nil; session.groupingPreview = nil; state = .idle }
 }
