@@ -61,7 +61,7 @@ struct CanvasImageDetails: View {
                 }
                 Section {
                     LabeledContent("Name", value: product.title)
-                    LabeledContent("Price", value: "£250.00")
+                    LabeledContent("Price", value: product.price.formatted(.currency(code: "GBP")))
                     LabeledContent("URL") {
                         if let url = URL(string: product.product_url) {
                             Link(destination: url) {

@@ -9,6 +9,9 @@ nonisolated struct SampleProduct: Codable, Equatable, Identifiable, Sendable {
     var aspect: Double
     var product_url: String
 
+    // Sample pricing until saved listing prices are available.
+    var price: Decimal { 250 }
+
     // Bundled titles include the brand, colour and product name.
     func matchesSearch(_ query: String) -> Bool {
         CanvasSearch.matches(title, query: query)
@@ -87,6 +90,13 @@ nonisolated enum CanvasError: LocalizedError {
 }
 
 extension CanvasDocument {
+    func sum(for group: CanvasNamedGroup) -> Decimal {
+        let productIDs = Set(group.members.compactMap { placements[$0]?.productID })
+        return productIDs.reduce(Decimal.zero) { total, id in
+            total + (products[id]?.price ?? .zero)
+        }
+    }
+
     mutating func reconcileGroupNames(_ groups: [[String]]) {
         let previous = namedGroups ?? []
         // Match the largest overlap first so a small split cannot steal the title.

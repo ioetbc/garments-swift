@@ -5,6 +5,7 @@ struct CanvasScreen: View {
     @State private var session = CanvasSession()
     @State private var statuses: [String: String] = [:]
     @State private var searchExpanded = false
+    @State private var groupPlacement: StickerPlacement?
     @Environment(\.scenePhase) private var phase
     var body: some View {
         NavigationStack {
@@ -33,29 +34,31 @@ struct CanvasScreen: View {
                 get: { session.inspectedPlacement },
                 set: { session.inspectedPlacement = $0 }
             )) { placement in
-                if let product = session.document.products[placement.productID] {
-                    CanvasImageDetails(product: product, status: Binding(
-                        get: { statuses[placement.id] ?? "Wishlist" },
-                        set: { statuses[placement.id] = $0 }
-                    ), onDelete: {
-                        session.inspectedPlacement = nil
-                        session.deletePlacement(placement.id)
-                        statuses[placement.id] = nil
-                    }, availability: session.classification(for: product), onAvailability: {
-                        session.updateAvailability($0, productID: product.id)
-                    })
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
+                productDetails(for: placement) {
+                    session.inspectedPlacement = nil
                 }
             }
             .sheet(item: Binding(
                 get: { session.inspectedGroup },
                 set: { session.inspectedGroup = $0 }
-            )) { group in
-                CanvasGroupNameDrawer(group: group) { name, colour in
+            ), onDismiss: {
+                groupPlacement = nil
+            }) { group in
+                CanvasGroupNameDrawer(
+                    group: session.document.namedGroups?.first { $0.id == group.id } ?? group,
+                    document: session.document,
+                    onOpenItem: { placement in
+                        groupPlacement = placement
+                    }
+                ) { name, colour in
                     session.updateGroup(group.id, name: name, backgroundColour: colour)
                 }
-                .presentationDetents([.height(360), .large])
+                .sheet(item: $groupPlacement) { placement in
+                    productDetails(for: placement) {
+                        groupPlacement = nil
+                    }
+                }
+                .presentationDetents([.height(410), .large])
                 .presentationDragIndicator(.visible)
             }
             .alert("Canvas needs attention",isPresented:Binding(get:{ session.error != nil },set:{ if !$0 { session.error = nil } })) {
@@ -67,16 +70,45 @@ struct CanvasScreen: View {
             .task { await session.loadAvailability() }
     }
 
+    @ViewBuilder
+    private func productDetails(for placement: StickerPlacement, onDelete: @escaping () -> Void) -> some View {
+        if let product = session.document.products[placement.productID] {
+            CanvasImageDetails(product: product, status: Binding(
+                get: { statuses[placement.id] ?? "Wishlist" },
+                set: { statuses[placement.id] = $0 }
+            ), onDelete: {
+                onDelete()
+                session.deletePlacement(placement.id)
+                statuses[placement.id] = nil
+                if let group = session.inspectedGroup {
+                    session.inspectedGroup = session.document.namedGroups?.first { $0.id == group.id }
+                }
+            }, availability: session.classification(for: product), onAvailability: {
+                session.updateAvailability($0, productID: product.id)
+            })
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
 }
 
 private struct CanvasGroupNameDrawer: View {
     let onUpdate: (String, CanvasGroupColour?) -> Void
+    let onOpenItem: (StickerPlacement) -> Void
+    let document: CanvasDocument
+    let members: [StickerPlacement]
+    let sum: Decimal
     @State private var name: String
     @State private var backgroundColour: CanvasGroupColour?
     @FocusState private var focused: Bool
 
-    init(group: CanvasNamedGroup, onUpdate: @escaping (String, CanvasGroupColour?) -> Void) {
+    init(group: CanvasNamedGroup, document: CanvasDocument, onOpenItem: @escaping (StickerPlacement) -> Void, onUpdate: @escaping (String, CanvasGroupColour?) -> Void) {
         self.onUpdate = onUpdate
+        self.onOpenItem = onOpenItem
+        self.document = document
+        members = group.members.compactMap { document.placements[$0] }
+        sum = document.sum(for: group)
         _name = State(initialValue: group.name)
         _backgroundColour = State(initialValue: group.backgroundColour)
     }
@@ -94,6 +126,7 @@ private struct CanvasGroupNameDrawer: View {
                         if value.count > 60 { name = String(value.prefix(60)) }
                         onUpdate(String(value.prefix(60)), backgroundColour)
                     }
+                LabeledContent("Cost of group", value: sum.formatted(.currency(code: "GBP")))
                 Section("Background colour") {
                     ColorPicker("Colour", selection: Binding(
                         get: {
@@ -114,6 +147,30 @@ private struct CanvasGroupNameDrawer: View {
                     }
                     .disabled(backgroundColour == nil)
                 }
+                Section("Items") {
+                    ForEach(members) { placement in
+                        if let product = document.products[placement.productID] {
+                            Button {
+                                focused = false
+                                onOpenItem(placement)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    CanvasGroupItemThumbnail(asset: product.asset)
+                                    Text(product.title)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(product.title)
+                            .accessibilityHint("Opens product details")
+                        }
+                    }
+                }
             }
             .navigationTitle("Edit group")
             .navigationBarTitleDisplayMode(.inline)
@@ -122,4 +179,34 @@ private struct CanvasGroupNameDrawer: View {
 
     }
 
+}
+
+private struct CanvasGroupItemThumbnail: View {
+    let asset: String
+    @State private var thumbnail: CGImage?
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                Image(decorative: thumbnail, scale: 1)
+                    .resizable()
+                    .scaledToFit()
+            } else {
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 56, height: 56)
+        .accessibilityHidden(true)
+        .task(id: asset) {
+            thumbnail = nil
+            let asset = asset
+            let image = await Task.detached(priority: .userInitiated) {
+                guard let url = CanvasImageWorker.sourceURL(asset) else { return nil as CGImage? }
+                return CanvasImageWorker.decode(url: url, tier: 192)
+            }.value
+            guard !Task.isCancelled else { return }
+            thumbnail = image
+        }
+    }
 }
