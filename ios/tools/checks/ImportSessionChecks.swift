@@ -252,6 +252,71 @@ import UIKit
         precondition(resumeSession.document.products[resumeProductID]?.galleryAssets?.count == 1)
         let legacy = try JSONDecoder().decode(GarmsAPI.ImportedProduct.self, from: Data(#"{"url":"https://shop.example","title":null,"imageURL":"https://cdn.example/first.png"}"#.utf8))
         precondition(legacy.imageURLs == nil && legacy.imageURL == firstURL)
+        // Photo batches share the normal queue, without metadata/image network calls.
+        let photosSession = CanvasSession()
+        let photos = ImportCoordinator(session: photosSession,
+            inbox: SharedImportInbox(directoryOverride: directory.appendingPathComponent("photos")),
+            fetch: { _ in preconditionFailure("Photos must not fetch listing metadata") },
+            image: { _ in preconditionFailure("Photos must not download listing images") },
+            cutout: { _ in nil })
+        var photoLoads = 0
+        photos.importPhoto(title: "Jacket") { photoLoads += 1; return png }
+        photos.importPhoto(title: "Shoes") { photoLoads += 1; return png }
+        photos.setActive(true)
+        try await Task.sleep(for: .milliseconds(30))
+        precondition(photoLoads == 0, "Photo imports wait for initial layout")
+        photosSession.updateViewport(CGSize(width: 390, height: 844))
+        photos.start()
+        try await waitFor { photos.items.allSatisfy { $0.state == "Ready" } }
+        precondition(photoLoads == 2 && photos.items.count == 2)
+        for item in photos.items {
+            let productID = photosSession.document.placements[item.placementID!]!.productID
+            let product = photosSession.document.products[productID]!
+            precondition(product.product_url.isEmpty && product.originalAsset != nil)
+            precondition(product.title == item.displayName && item.canRetryBackground)
+        }
+        photos.retry(photos.items[0].id)
+        try await waitFor { photos.items[0].state == "Ready" }
+        precondition(photoLoads == 2, "Background retries reuse the retained original")
+        var failedLoads = 0
+        photos.importPhoto {
+            failedLoads += 1
+            return failedLoads == 1 ? Data("bad photo".utf8) : png
+        }
+        try await waitFor { photos.items.last?.state == "Failed" }
+        let failedID = photos.items.last!.id
+        precondition(photos.items.last?.placementID == nil)
+        photos.retry(failedID)
+        try await waitFor { photos.items.last?.state == "Ready" }
+        precondition(failedLoads == 2)
+        let dismissedPlacement = photos.items.last!.placementID!
+        photos.dismiss(failedID)
+        precondition(photosSession.document.placements[dismissedPlacement] == nil)
+
+        var delayedLoads = 0
+        photos.importPhoto {
+            delayedLoads += 1
+            try? await Task.sleep(for: .milliseconds(80))
+            return png
+        }
+        try await waitFor { delayedLoads == 1 }
+        photos.setActive(false)
+        try await Task.sleep(for: .milliseconds(100))
+        precondition(photos.items.last?.state == "Queued" && photos.items.last?.placementID == nil)
+        photos.setActive(true)
+        try await waitFor { photos.items.last?.state == "Ready" }
+        precondition(delayedLoads == 2)
+
+        photos.importPhoto {
+            try? await Task.sleep(for: .milliseconds(80))
+            return png
+        }
+        try await waitFor { photos.items.last?.state == "Processing" }
+        let countBeforeDismiss = photosSession.document.order.count
+        photos.dismiss(photos.items.last!.id)
+        try await Task.sleep(for: .milliseconds(120))
+        precondition(photosSession.document.order.count == countBeforeDismiss, "Dismissed loads cannot publish artwork")
+        try photosSession.document.validate()
         print("Import session checks passed")
     }
 }

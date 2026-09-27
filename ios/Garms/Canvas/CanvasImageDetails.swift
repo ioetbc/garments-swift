@@ -57,16 +57,18 @@ struct CanvasImageDetails: View {
                     Section {
                         LabeledContent("Name", value: product.title)
                         LabeledContent("Price", value: product.price?.formatted(.currency(code: "GBP")) ?? "Not available")
-                        LabeledContent("URL") {
-                            if let url = URL(string: product.product_url) {
-                                Link(destination: url) {
-                                    Text(url.absoluteString)
-                                        .lineLimit(1)
-                                        .truncationMode(.tail)
+                        if !product.product_url.isEmpty {
+                            LabeledContent("URL") {
+                                if let url = URL(string: product.product_url) {
+                                    Link(destination: url) {
+                                        Text(url.absoluteString)
+                                            .lineLimit(1)
+                                            .truncationMode(.tail)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.tint)
+                                    .accessibilityHint("Opens in your browser")
                                 }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(.tint)
-                                .accessibilityHint("Opens in your browser")
                             }
                         }
                         Picker("Status", selection: $status) {
@@ -80,43 +82,45 @@ struct CanvasImageDetails: View {
                             LabeledContent("Brand", value: brand)
                         }
                     }
-                    Section("Listing availability") {
-                        Button {
-                            scrapingPage = true
-                        } label: {
-                            HStack {
-                                Label(scrapingPage ? "Checking availability…" : "Check availability", systemImage: "arrow.clockwise")
-                                Spacer()
-                                if scrapingPage { ProgressView() }
+                    if !product.product_url.isEmpty {
+                        Section("Listing availability") {
+                            Button {
+                                scrapingPage = true
+                            } label: {
+                                HStack {
+                                    Label(scrapingPage ? "Checking availability…" : "Check availability", systemImage: "arrow.clockwise")
+                                    Spacer()
+                                    if scrapingPage { ProgressView() }
+                                }
                             }
-                        }
-                        .disabled(scrapingPage || product.product_url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if let scrapeError {
-                            Text(scrapeError)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
-                        }
-                        if let classification = scrapedPage?.classification ?? availability {
-                            LabeledContent("Availability", value: classification.label)
-                                .accessibilityIdentifier("productAvailability")
-                            if let message = classification.error {
-                                Text(message)
+                            .disabled(scrapingPage || product.product_url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            if let scrapeError {
+                                Text(scrapeError)
                                     .font(.footnote)
-                                    .foregroundStyle(.orange)
-                                    .textSelection(.enabled)
+                                    .foregroundStyle(.red)
                             }
-                        } else if scrapedPage != nil {
-                            LabeledContent("Availability", value: "Unknown")
-                        }
-                        if let scrapedPage {
-                            Button("View Markdown") { showingMarkdown = true }
-                            Text(scrapedPage.url)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if let code = scrapedPage.statusCode, code >= 400 {
-                                Text("The source page returned HTTP \(code).")
-                                    .font(.footnote)
-                                    .foregroundStyle(.orange)
+                            if let classification = scrapedPage?.classification ?? availability {
+                                LabeledContent("Availability", value: classification.label)
+                                    .accessibilityIdentifier("productAvailability")
+                                if let message = classification.error {
+                                    Text(message)
+                                        .font(.footnote)
+                                        .foregroundStyle(.orange)
+                                        .textSelection(.enabled)
+                                }
+                            } else if scrapedPage != nil {
+                                LabeledContent("Availability", value: "Unknown")
+                            }
+                            if let scrapedPage {
+                                Button("View Markdown") { showingMarkdown = true }
+                                Text(scrapedPage.url)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if let code = scrapedPage.statusCode, code >= 400 {
+                                    Text("The source page returned HTTP \(code).")
+                                        .font(.footnote)
+                                        .foregroundStyle(.orange)
+                                }
                             }
                         }
                     }

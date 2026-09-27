@@ -39,6 +39,10 @@ nonisolated enum ImportedImageDownload {
             data.append(byte)
         }
         try Task.checkCancellation()
+        return try await prepare(data)
+    }
+    static func prepare(_ data: Data) async throws -> Artwork {
+        try Task.checkCancellation()
         return try await Task.detached {
             guard let source = CGImageSourceCreateWithData(data as CFData, nil),
                   let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -47,9 +51,9 @@ nonisolated enum ImportedImageDownload {
                   width > 0, height > 0, width <= 20000, height <= 20000, width * height <= 80_000_000,
                   let image = CanvasImageWorker.decode(data: data, tier: 2048) else { throw ImageError.detail("Image decoding failed or dimensions exceed 20,000 pixels / 80 megapixels.") }
             let output = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw ImageError.detail("Could not encode the downloaded image as PNG.") }
+            guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw ImageError.detail("Could not encode the image as PNG.") }
             CGImageDestinationAddImage(destination, image, nil)
-            guard CGImageDestinationFinalize(destination) else { throw ImageError.detail("Could not encode the downloaded image as PNG.") }
+            guard CGImageDestinationFinalize(destination) else { throw ImageError.detail("Could not encode the image as PNG.") }
             return Artwork(data: output as Data, aspect: Double(image.width) / Double(image.height))
         }.value
     }

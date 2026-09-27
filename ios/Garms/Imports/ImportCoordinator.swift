@@ -3,11 +3,14 @@ import Observation
 import OSLog
 
 @Observable @MainActor final class ImportCoordinator {
-    enum Stage { case fetching, downloading, removingBackground }
+    enum Stage { case loadingPhoto, fetching, downloading, removingBackground }
     struct Checkpoint { let asset: String; let aspect: Double }
     struct Item: Identifiable {
         let id: UUID
         let record: SharedImport
+        var photoLoader: (() async throws -> Data)?
+        var isPhoto = false
+        var displayName: String { isPhoto ? record.suggestedTitle ?? "Photo" : record.url }
         var placementID: String?
         var state = "Queued"
         var failure: String?
@@ -18,7 +21,7 @@ import OSLog
         var canRetryBackground: Bool { state == "Ready" && note != nil && checkpoint != nil }
         var logs: [String] = ["Queued for import."]
         var diagnosticReport: String {
-            "Import: \(id.uuidString)\nURL: \(record.url)\nState: \(state)\n" + logs.joined(separator: "\n")
+            "Import: \(id.uuidString)\nSource: \(isPhoto ? "Photos" : record.url)\nState: \(state)\n" + logs.joined(separator: "\n")
         }
         var attempt = UUID()
     }
@@ -80,6 +83,11 @@ import OSLog
             }
             start()
         } catch { session?.error = error.localizedDescription }
+    }
+    func importPhoto(title: String = "Imported photo", load: @escaping () async throws -> Data) {
+        let record = SharedImport(url: "", suggestedTitle: title)
+        enqueue(Item(id: record.id, record: record, photoLoader: load, isPhoto: true))
+        start()
     }
     private func drain() {
         guard !draining else { return }
@@ -145,6 +153,30 @@ import OSLog
                 if let checkpoint = items[index].checkpoint, let data = session.importedAssets.data(for: checkpoint.asset) {
                     source = .init(data: data, aspect: checkpoint.aspect)
                     log(id, "Resuming background removal from the saved original (\(data.count) bytes).")
+                } else if items[index].isPhoto {
+                    items[index].stage = .loadingPhoto
+                    log(id, "Loading selected photo and preparing artwork bounded to 2,048 pixels.")
+                    guard let load = items[index].photoLoader else {
+                        throw ImportedImageDownload.ImageError.detail("The original photo is no longer available. Select it again from Photos.")
+                    }
+                    let data = try await load()
+                    try Task.checkCancellation()
+                    guard valid(id, attempt, placement) else { continue }
+                    source = try await ImportedImageDownload.prepare(data)
+                    try Task.checkCancellation()
+                    guard valid(id, attempt, placement),
+                          let current = items.firstIndex(where: { $0.id == id }) else { continue }
+                    if placement == nil {
+                        placement = session.insertImport(items[current].record, artwork: source)
+                        items[current].placementID = placement
+                    }
+                    guard let placement,
+                          let asset = session.installImportOriginal(placement, title: nil, artwork: source) else {
+                        throw ImportedImageDownload.ImageError.invalid
+                    }
+                    items[current].checkpoint = Checkpoint(asset: asset, aspect: source.aspect)
+                    items[current].photoLoader = nil
+                    log(id, "Photo decoded and original installed on canvas (\(source.data.count) PNG bytes).")
                 } else {
                     items[index].checkpoint = nil
                     items[index].stage = .fetching

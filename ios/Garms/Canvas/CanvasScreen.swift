@@ -1,10 +1,12 @@
 import SwiftUI
 import UIKit
+import PhotosUI
 
 struct CanvasScreen: View {
     @State private var session = CanvasSession()
     @State private var statuses: [String: String] = [:]
     @State private var showingImports = false
+    @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var sendingLogs: Set<UUID> = []
     @State private var logDelivery: [UUID: String] = [:]
     @State private var searchExpanded = false
@@ -106,26 +108,14 @@ struct CanvasScreen: View {
             .sheet(isPresented: $showingImports) {
                 NavigationStack {
                     List {
-                        Section("Test links") {
-                            ForEach(Array(ImportConstants.testLinks.enumerated()), id: \.offset) { _, url in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(url).lineLimit(2)
-                                    Button("Import this link", systemImage: "link.badge.plus") {
-                                        session.imports.loadTestLinks([url])
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .disabled(session.imports.items.contains {
-                                        $0.state == "Queued" || $0.state == "Processing" ||
-                                        (try? SharedLink.normalized($0.record.url)) == (try? SharedLink.normalized(url))
-                                    })
-                                }
-                            }
+                        Section {
+                            photoPicker
                         }
-                        if session.imports.items.isEmpty { Text("Choose a test link or share a link to import it.") }
+                        if session.imports.items.isEmpty { Text("Choose photos or share a link to import items.") }
                         ForEach(session.imports.items) { item in
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(item.record.url).lineLimit(2)
-                                Text(item.failure ?? (item.stage == .removingBackground && item.state == "Processing" ? "Removing background…" : item.note ?? item.state)).font(.caption)
+                                Text(item.displayName).lineLimit(2)
+                                Text(item.failure ?? (item.stage == .loadingPhoto && item.state == "Processing" ? "Loading photo…" : item.stage == .removingBackground && item.state == "Processing" ? "Removing background…" : item.note ?? item.state)).font(.caption)
                                 DisclosureGroup("Processing log") {
                                     Text(item.logs.joined(separator: "\n"))
                                         .font(.system(.caption, design: .monospaced))
@@ -169,12 +159,33 @@ struct CanvasScreen: View {
             .alert("Canvas needs attention",isPresented:Binding(get:{ session.error != nil },set:{ if !$0 { session.error = nil } })) {
                 Button("OK") { session.error = nil }
             } message: { Text(session.error ?? "") }
+            .onChange(of: selectedPhotos) { _, photos in
+                guard !photos.isEmpty else { return }
+                session.isDrawing = false
+                session.resolveInteraction?()
+                for (index, photo) in photos.enumerated() {
+                    session.imports.importPhoto(title: "Imported photo \(index + 1)") {
+                        guard let data = try await photo.loadTransferable(type: Data.self) else {
+                            throw ImportedImageDownload.ImageError.detail("This photo could not be loaded. Retry or select another image.")
+                        }
+                        return data
+                    }
+                }
+                selectedPhotos = []
+            }
             .onChange(of:phase) { _,v in
                 if v != .active { session.resolveInteraction?() }
                 session.imports.setActive(v == .active)
             }
             .task { session.imports.setActive(phase == .active) }
             .task { await session.loadAvailability() }
+    }
+
+    private var photoPicker: some View {
+        PhotosPicker(selection: $selectedPhotos, selectionBehavior: .ordered, matching: .images) {
+            Label("Import photos", systemImage: "photo.badge.plus")
+        }
+        .accessibilityHint("Choose photos to add as separate items and remove their backgrounds")
     }
 
     @ViewBuilder

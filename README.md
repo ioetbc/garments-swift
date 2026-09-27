@@ -65,6 +65,21 @@ failures do not mark products unavailable. Search dimming still takes precedence
 The drawer shows the loaded availability, and manual checks update that product’s canvas
 availability, even when other products share its URL. VoiceOver reads the availability status too.
 
+## Photo imports (prototype)
+
+Open **Imports** and tap **Import photos**, select one or more images,
+then tap **Add**. Each selected photo becomes a separate item in selection order.
+Garms loads and normalises the image to at most 2,048 pixels, then runs the same
+background removal and canvas flow as link imports. The original remains in
+product details. Loading failures support Retry and Dismiss; background removal
+failures retain the original and support **Retry background removal**. Processing
+pauses while the app is inactive and resumes when it returns.
+
+Photo imports use the system photo picker, need no API server, and have no listing
+URL or availability check. As with link imports, items remain in session memory
+and are lost when the app is terminated. Each photo's detected subjects stay
+together in one sticker; selecting individual garments within a photo is not supported.
+
 ## Shared-link imports (prototype)
 
 Share one HTTP(S) product link to **Garms**, tap **Add**, then **Done** and manually
@@ -73,13 +88,6 @@ imports sequentially while active. The Imports button shows progress and failed
 links with Retry and Dismiss. Dismiss removes that imported sticker. Exact URLs
 are deduplicated within the session, preserving size/variant queries and fragments.
 A missing or rejected image leaves the linked placeholder available for retry.
-
-For repeatable imports without the share sheet, edit `ImportConstants.testLinks` in
-`ios/Garms/Imports/ImportConstants.swift`, rebuild, then open **Imports** and tap **Import this link** beneath one URL. This runs the real API fetch, image download and background removal and
-adds the results to the canvas. The API server and Firecrawl configuration are
-still required. Test-link buttons are disabled while an import is queued or processing and for
-links already in Imports; dismiss an import to run that link again. Test links are allowed to match bundled canvas fixtures so
-they still exercise processing. They remain session-only, like shared imports.
 
 After downloading the first photo, Garms immediately shows the original, downloads
 the remaining gallery photos, then removes the first photo's background
