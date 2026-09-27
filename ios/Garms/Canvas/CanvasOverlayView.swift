@@ -20,9 +20,9 @@ import UIKit
         titleOpacity = CGFloat(progress * progress * (3 - 2 * progress))
         guard titleOpacity > 0 else { titles = []; return }
         titles = (session.document.namedGroups ?? []).compactMap { group in
-            let items = group.members.compactMap { session.document.placements[$0] }
-            guard !items.isEmpty else { return nil }
-            let rect = displayedGroupBounds?(group) ?? screenRect(CanvasGeometry.union(items), session)
+            let worldBounds = group.bounds(in: session.document)
+            guard !worldBounds.isNull else { return nil }
+            let rect = displayedGroupBounds?(group) ?? screenRect(worldBounds, session)
             let width = min(max(120, rect.width), 280, ceil((group.name as NSString).size(withAttributes: [.font: titleFont]).width) + 16)
             let height = max(44, titleFont.lineHeight + 16)
             // Keep the visible pill four points above the group, accounting for its inset.

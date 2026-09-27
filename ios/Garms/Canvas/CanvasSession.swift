@@ -88,7 +88,8 @@ import PencilKit
             !groupMatches.contains($0.id) && !productMatches.contains($0.productID)
         }.map(\.id))
         dimmedGroupIDs = Set(namedGroups.filter {
-            $0.members.allSatisfy { dimmedPlacementIDs.contains($0) }
+            !CanvasSearch.matches($0.name, query: searchQuery) &&
+                $0.members.allSatisfy { dimmedPlacementIDs.contains($0) }
         }.map(\.id))
     }
     var selected: [StickerPlacement] { selection.flatMap { document.placements[$0] }.map { [$0] } ?? [] }
@@ -101,6 +102,11 @@ import PencilKit
         guard !hasInitialLayout, size.width > 0, size.height > 0 else { return }
         committedGroups = CanvasFixtures.fit(&document,viewport:size)
         camera = CanvasCamera(center:.init(x:size.width/2,y:size.height/2),zoom:1)
+        let bounds = CanvasGeometry.union(Array(document.placements.values))
+        let center = WorldPoint(x: bounds.isNull ? size.width / 2 : bounds.maxX + 250, y: size.height / 2)
+        document.namedGroups = (document.namedGroups ?? []) + [CanvasNamedGroup(
+            id: CanvasNamedGroup.recentUploadsID, members: [], name: "Recent uploads",
+            backgroundColour: .init(red: 0.22, green: 1, blue: 0.08), emptyCenter: center)]
         hasInitialLayout = true
         refresh()
         imports.start()
@@ -136,6 +142,25 @@ import PencilKit
         history.record(before: before, after: snapshot(), key: "group-" + id)
         pruneImportedAssets()
     }
+    func updateProductNotes(_ id: String, notes: String) {
+        guard let product = document.products[id], product.notes ?? "" != notes else { return }
+        let before = snapshot()
+        document.products[id]?.notes = notes.isEmpty ? nil : notes
+        revision &+= 1
+        history.record(before: before, after: snapshot(), key: "product-notes-" + id)
+        pruneImportedAssets()
+    }
+
+    func updateGroupNotes(_ id: String, notes: String) {
+        guard let index = document.namedGroups?.firstIndex(where: { $0.id == id }),
+              document.namedGroups?[index].notes ?? "" != notes else { return }
+        let before = snapshot()
+        document.namedGroups?[index].notes = notes.isEmpty ? nil : notes
+        revision &+= 1
+        history.record(before: before, after: snapshot(), key: "group-notes-" + id)
+        pruneImportedAssets()
+    }
+
     func select(_ id: String?, showDetails: Bool = false) {
         selection = id
         inspectedPlacement = showDetails ? id.flatMap { document.placements[$0] } : nil
@@ -210,20 +235,31 @@ import PencilKit
     func insertImport(_ record: SharedImport, artwork: ImportedImageDownload.Artwork) -> String? {
         guard hasInitialLayout, artwork.aspect.isFinite, artwork.aspect > 0 else { return nil }
         resolveInteraction?()
+        guard let recentIndex = document.namedGroups?.firstIndex(where: \.isRecentUploads),
+              let recent = document.namedGroups?[recentIndex] else { return nil }
         let before = document
+        let baseline = snapshot()
         let productID = UUID().uuidString
         let asset = importedAssets.insert(artwork.data)
         let product = SampleProduct(id: productID, title: record.suggestedTitle ?? URL(string: record.url)?.host ?? "Saved link", category: "", asset: asset, aspect: artwork.aspect, product_url: record.url, isImported: true)
-        let edge = min(CanvasConfiguration.edge.upperBound, max(CanvasConfiguration.edge.lowerBound, CanvasConfiguration.initialImageEdge / camera.zoom))
-        let offset = Double(document.products.values.filter { $0.isImported == true }.count % 5) * 18 / camera.zoom
-        let placement = StickerPlacement(productID: productID, center: camera.center + WorldPoint(x: offset, y: offset), width: product.aspect >= 1 ? edge : edge * product.aspect, height: product.aspect >= 1 ? edge / product.aspect : edge)
+        let edge = CanvasConfiguration.initialImageEdge
+        let width = product.aspect >= 1 ? edge : edge * product.aspect
+        let height = product.aspect >= 1 ? edge / product.aspect : edge
+        let bounds = recent.bounds(in: document)
+        let center = recent.members.isEmpty ? WorldPoint(x: bounds.midX, y: bounds.midY)
+            : WorldPoint(x: bounds.maxX + CanvasConfiguration.magneticRestGap + width / 2, y: bounds.midY)
+        let placement = StickerPlacement(productID: productID, center: center, width: width, height: height)
         document.products[productID] = product
         document.placements[placement.id] = placement
         document.order.append(placement.id)
-        complete(before)
+        document.namedGroups?[recentIndex].members.append(placement.id)
+        document.namedGroups?[recentIndex].emptyCenter = center
+        committedGroups.removeAll { group in group.contains(where: recent.members.contains) }
+        committedGroups.append(recent.members + [placement.id])
+        complete(before, baseline: baseline)
         guard document.placements[placement.id] != nil else { pruneImportedAssets(); return nil }
         searchQuery = ""
-        select(placement.id)
+        revealImport(placement.id)
         return placement.id
     }
     private func pruneImportedAssets() {

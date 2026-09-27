@@ -57,6 +57,10 @@ Server-only credentials belong in `web/.env.local` locally and the hosting provi
 
 ## Canvas availability
 
+Product and group drawers include a multiline **Notes** field. Edits save as you
+type within the current canvas session and support undo/redo. Notes are currently
+held in memory with the canvas and are lost when the app is terminated.
+
 When the canvas loads, the app checks each product independently through
 `/api/scrape`, with at most three requests in flight. The server reuses successful
 results for 24 hours. Products marked `out_of_stock`, `sold`, `listing_ended`, or

@@ -60,7 +60,9 @@ struct CanvasSnapshot: Equatable {
         func enrich(_ snapshot: inout CanvasSnapshot) {
             for (id, product) in after.products where before.products[id] != product {
                 guard snapshot.document.products[id] != nil else { continue }
-                snapshot.document.products[id] = product
+                var enriched = product
+                enriched.notes = snapshot.document.products[id]?.notes
+                snapshot.document.products[id] = enriched
                 for (placementID, placement) in snapshot.document.placements where placement.productID == id {
                     guard let old = before.placements[placementID], let new = after.placements[placementID],
                           old.width != new.width || old.height != new.height else { continue }

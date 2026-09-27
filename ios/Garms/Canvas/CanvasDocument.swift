@@ -8,6 +8,7 @@ nonisolated struct SampleProduct: Codable, Equatable, Identifiable, Sendable {
     var asset: String
     var aspect: Double
     var product_url: String
+    var notes: String? = nil
 
     // Sample pricing until saved listing prices are available.
     var originalAsset: String? = nil
@@ -67,6 +68,17 @@ nonisolated struct CanvasNamedGroup: Codable, Equatable, Identifiable, Sendable 
     var members: [String]
     var name: String
     var backgroundColour: CanvasGroupColour? = nil
+    var notes: String? = nil
+
+    static let recentUploadsID = "recent-uploads"
+    var emptyCenter: WorldPoint? = nil
+    var isRecentUploads: Bool { id == Self.recentUploadsID }
+
+    func bounds(in document: CanvasDocument) -> CGRect {
+        let bounds = CanvasGeometry.union(members.compactMap { document.placements[$0] })
+        guard bounds.isNull, let center = emptyCenter else { return bounds }
+        return CGRect(x: center.x - 90, y: center.y - 75, width: 180, height: 150)
+    }
 
     static let placeholderNames = [
         "To buy summer", "Things to buy soon", "Etsy ending soon", "Waiting for a sale",
@@ -138,6 +150,12 @@ extension CanvasDocument {
             while usedNames.contains(name) { name = "\(base) \(suffix)"; suffix += 1 }
             usedNames.insert(name)
             return CanvasNamedGroup(members: groups[index], name: name)
+        }
+        if let recent = previous.first(where: \.isRecentUploads),
+           namedGroups?.contains(where: \.isRecentUploads) != true {
+            var empty = recent
+            empty.members = []
+            namedGroups?.append(empty)
         }
     }
 }

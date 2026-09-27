@@ -4,6 +4,7 @@ struct CanvasImageDetails: View {
     let product: SampleProduct
     let library: ImportedAssetLibrary
     @Binding var status: String
+    @Binding var notes: String
     let onDelete: () -> Void
     let availability: GarmsAPI.ProductClassification?
     let onAvailability: (GarmsAPI.ProductClassification) -> Void
@@ -15,7 +16,6 @@ struct CanvasImageDetails: View {
     @State private var checkingConnection = false
     @State private var connectionMessage: String?
     @State private var connectionFailed = false
-    @Environment(\.dismiss) private var dismiss
 
     // Placeholder details derived from the bundled sample names.
     private var colour: String {
@@ -81,6 +81,13 @@ struct CanvasImageDetails: View {
                             LabeledContent("Colour", value: colour)
                             LabeledContent("Brand", value: brand)
                         }
+                    }
+                    Section("Notes") {
+                        TextField("Add notes…", text: $notes, axis: .vertical)
+                            .lineLimit(4...12)
+                            .textInputAutocapitalization(.sentences)
+                            .autocorrectionDisabled(false)
+                            .accessibilityLabel("Product notes")
                     }
                     if !product.product_url.isEmpty {
                         Section("Listing availability") {
@@ -153,10 +160,7 @@ struct CanvasImageDetails: View {
                         .listRowBackground(Color.red.opacity(0.10))
                     }
                 }
-                .scrollContentBackground(.hidden)
-                .background(Color.white)
-                .toolbarBackground(Color.white, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
+                .scrollDismissesKeyboard(.interactively)
                 .navigationTitle("Product details")
                 .navigationBarTitleDisplayMode(.inline)
                 .alert("Delete product?", isPresented: $showingDeleteConfirmation) {
@@ -165,15 +169,8 @@ struct CanvasImageDetails: View {
                 } message: {
                     Text("Are you sure you want to delete this product from the canvas?")
                 }
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Close", systemImage: "xmark") { dismiss() }
-                            .labelStyle(.iconOnly)
-                    }
-                }
             }
         }
-        .preferredColorScheme(.light)
         .sheet(isPresented: $showingMarkdown) {
             NavigationStack {
                 ScrollView {

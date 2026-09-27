@@ -91,6 +91,10 @@ struct CanvasScreen: View {
                     group: session.document.namedGroups?.first { $0.id == group.id } ?? group,
                     document: session.document,
                     library: session.importedAssets,
+                    notes: Binding(
+                        get: { session.document.namedGroups?.first { $0.id == group.id }?.notes ?? "" },
+                        set: { session.updateGroupNotes(group.id, notes: $0) }
+                    ),
                     onOpenItem: { placement in
                         groupPlacement = placement
                     }
@@ -195,6 +199,9 @@ struct CanvasScreen: View {
             CanvasImageDetails(product: product, library: session.importedAssets, status: Binding(
                 get: { statuses[placement.id] ?? "Wishlist" },
                 set: { statuses[placement.id] = $0 }
+            ), notes: Binding(
+                get: { session.document.products[product.id]?.notes ?? "" },
+                set: { session.updateProductNotes(product.id, notes: $0) }
             ), onDelete: {
                 onDelete()
                 session.deletePlacement(placement.id)
@@ -206,8 +213,8 @@ struct CanvasScreen: View {
                 session.updateAvailability($0, productID: product.id)
             })
             .presentationDetents([.large])
-            .presentationBackground(.white)
             .presentationDragIndicator(.visible)
+            .onDisappear { session.history.endCoalescing() }
         }
     }
 
@@ -222,13 +229,15 @@ private struct CanvasGroupNameDrawer: View {
     let sum: Decimal
     @State private var name: String
     @State private var backgroundColour: CanvasGroupColour?
+    @Binding private var notes: String
     @FocusState private var focused: Bool
 
-    init(group: CanvasNamedGroup, document: CanvasDocument, library: ImportedAssetLibrary, onOpenItem: @escaping (StickerPlacement) -> Void, onUpdate: @escaping (String, CanvasGroupColour?) -> Void) {
+    init(group: CanvasNamedGroup, document: CanvasDocument, library: ImportedAssetLibrary, notes: Binding<String>, onOpenItem: @escaping (StickerPlacement) -> Void, onUpdate: @escaping (String, CanvasGroupColour?) -> Void) {
         self.onUpdate = onUpdate
         self.onOpenItem = onOpenItem
         self.document = document
         self.library = library
+        _notes = notes
         members = group.members.compactMap { document.placements[$0] }
         sum = document.sum(for: group)
         _name = State(initialValue: group.name)
@@ -249,6 +258,13 @@ private struct CanvasGroupNameDrawer: View {
                         onUpdate(String(value.prefix(60)), backgroundColour)
                     }
                 LabeledContent(members.contains { document.products[$0.productID]?.price == nil } ? "Known-price subtotal" : "Cost of group", value: members.contains { document.products[$0.productID]?.price != nil } ? sum.formatted(.currency(code: "GBP")) : "Not available")
+                Section("Notes") {
+                    TextField("Add notes…", text: $notes, axis: .vertical)
+                        .lineLimit(4...12)
+                        .textInputAutocapitalization(.sentences)
+                        .autocorrectionDisabled(false)
+                        .accessibilityLabel("Group notes")
+                }
                 Section("Background colour") {
                     ColorPicker("Colour", selection: Binding(
                         get: {
@@ -295,6 +311,7 @@ private struct CanvasGroupNameDrawer: View {
                 }
             }
             .navigationTitle("Edit group")
+            .scrollDismissesKeyboard(.interactively)
             .navigationBarTitleDisplayMode(.inline)
 
         }

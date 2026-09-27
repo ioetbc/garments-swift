@@ -22,6 +22,9 @@ import UIKit
         let artwork = ImportedImageDownload.Artwork(data: png, aspect: 0.5)
         precondition(session.insertImport(record, artwork: artwork) == nil)
         session.updateViewport(CGSize(width: 390, height: 844))
+        let initialGroup = session.document.namedGroups!.first(where: \.isRecentUploads)!
+        precondition(initialGroup.name == "Recent uploads" && initialGroup.members.isEmpty)
+        precondition(initialGroup.backgroundColour == .init(red: 0.22, green: 1, blue: 0.08))
         let baseline = session.document.order.count
         var requests = 0
         let coordinator = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
@@ -38,6 +41,7 @@ import UIKit
         precondition(coordinator.items.count == 1 && coordinator.items[0].state == "Ready")
         let remaining = try inbox.files(); precondition(remaining.isEmpty)
         let placementID = coordinator.items[0].placementID!
+        precondition(session.document.namedGroups!.first(where: \.isRecentUploads)!.members == [placementID])
         let placement = session.document.placements[placementID]!
         let product = session.document.products[placement.productID]!
         precondition(product.title == "Imported jacket" && product.price == nil)
@@ -107,6 +111,11 @@ import UIKit
         precondition(ready.progress?.current == 1 && ready.progress?.total == 2)
         try await waitFor { ready.items.allSatisfy { $0.state == "Ready" } }
         precondition(peak == 1)
+        let uploads = readySession.document.namedGroups!.first(where: \.isRecentUploads)!
+        precondition(Set(uploads.members) == Set(ready.items.compactMap(\.placementID)))
+        precondition(uploads.id == initialGroup.id)
+        let roundTrip = try JSONDecoder().decode(CanvasDocument.self, from: JSONEncoder().encode(readySession.document))
+        precondition(roundTrip.namedGroups == readySession.document.namedGroups)
         let saved = ready.items[0].placementID!
         try inbox.enqueue(SharedImport(url: ready.items[0].record.url))
         ready.setActive(true)
@@ -269,6 +278,8 @@ import UIKit
         photos.start()
         try await waitFor { photos.items.allSatisfy { $0.state == "Ready" } }
         precondition(photoLoads == 2 && photos.items.count == 2)
+        precondition(Set(photosSession.document.namedGroups!.first(where: \.isRecentUploads)!.members)
+            == Set(photos.items.compactMap(\.placementID)))
         for item in photos.items {
             let productID = photosSession.document.placements[item.placementID!]!.productID
             let product = photosSession.document.products[productID]!
@@ -317,6 +328,22 @@ import UIKit
         try await Task.sleep(for: .milliseconds(120))
         precondition(photosSession.document.order.count == countBeforeDismiss, "Dismissed loads cannot publish artwork")
         try photosSession.document.validate()
+        let destination = CanvasSession()
+        destination.updateViewport(CGSize(width: 390, height: 844))
+        let first = destination.insertImport(record, artwork: artwork)!
+        destination.camera.center = .init(x: -10000, y: -10000)
+        destination.camera.zoom = 0.1
+        let next = destination.insertImport(second, artwork: artwork)!
+        precondition(Set(destination.document.namedGroups!.first(where: \.isRecentUploads)!.members) == [first, next])
+        destination.undo()
+        precondition(destination.document.namedGroups!.first(where: \.isRecentUploads)!.members == [first])
+        destination.redo()
+        destination.deletePlacement(first)
+        destination.deletePlacement(next)
+        let empty = destination.document.namedGroups!.first(where: \.isRecentUploads)!
+        precondition(empty.members.isEmpty && !empty.bounds(in: destination.document).isNull)
+        let replacement = destination.insertImport(record, artwork: artwork)!
+        precondition(destination.document.namedGroups!.first(where: \.isRecentUploads)!.members == [replacement])
         print("Import session checks passed")
     }
 }

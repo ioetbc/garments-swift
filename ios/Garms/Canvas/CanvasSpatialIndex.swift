@@ -68,7 +68,8 @@ nonisolated enum CanvasProximity {
                     visited.insert(other); members.append(other)
                 }
             }
-            if members.count > 1 { result.append(members) }
+            let recentMembers = document.namedGroups?.first(where: \.isRecentUploads)?.members ?? []
+            if members.count > 1 || members.contains(where: recentMembers.contains) { result.append(members) }
         }
         return result
     }

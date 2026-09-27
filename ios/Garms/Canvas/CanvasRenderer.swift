@@ -116,7 +116,7 @@ import UIKit
         }
         for group in groups {
             guard let colour = group.backgroundColour else { continue }
-            let rect = CanvasGeometry.union(group.members.compactMap { session.document.placements[$0] })
+            let rect = group.bounds(in: session.document)
                 .insetBy(dx: -9/session.camera.zoom, dy: -9/session.camera.zoom)
             guard !rect.isNull else { continue }
             let layer = groupBackgrounds[group.id] ?? CAShapeLayer()
@@ -145,6 +145,7 @@ import UIKit
                 rect = rect.union(item.bounds)
             }
         }
+        if rect.isNull { rect = group.bounds(in: session.document) }
         guard !rect.isNull else { return rect }
         let point = session.camera.screen(WorldPoint(x: rect.minX, y: rect.minY), viewport: session.viewport)
         var screen = CGRect(x: point.x, y: point.y, width: rect.width * session.camera.zoom, height: rect.height * session.camera.zoom)
