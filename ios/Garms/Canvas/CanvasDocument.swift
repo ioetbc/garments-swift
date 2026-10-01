@@ -46,6 +46,7 @@ nonisolated enum CanvasSearch {
 nonisolated struct StickerPlacement: Codable, Equatable, Identifiable, Sendable {
     var id: String = UUID().uuidString
     var productID: String
+    var canvasUsername: String? = nil
     var center: WorldPoint
     var width: Double
     var height: Double
@@ -87,9 +88,19 @@ nonisolated struct CanvasNamedGroup: Codable, Equatable, Identifiable, Sendable 
     ]
 }
 
+nonisolated struct CanvasProfile: Codable, Equatable, Identifiable, Sendable {
+    var username: String
+    var displayName: String
+    var id: String { username }
+    var title: String { "\(displayName)’s canvas" }
+}
+
 // Membership is derived from positions; titles follow the largest surviving overlap.
 nonisolated struct CanvasDocument: Codable, Equatable, Sendable {
     var namedGroups: [CanvasNamedGroup]? = nil
+    var username: String? = "you"
+    var visibleCanvases: [CanvasProfile]? = nil
+    var followedUsernames: [String]? = nil
     var schemaVersion = 1
     var products: [String: SampleProduct] = [:]
     var placements: [String: StickerPlacement] = [:]
@@ -110,6 +121,14 @@ nonisolated enum CanvasError: LocalizedError {
 }
 
 extension CanvasDocument {
+    func canvasMembers(_ username: String?) -> [String] {
+        order.filter { placements[$0]?.canvasUsername == username }
+    }
+
+    func canvasBounds(_ username: String?) -> CGRect {
+        CanvasGeometry.union(canvasMembers(username).compactMap { placements[$0] })
+    }
+
     func sum(for group: CanvasNamedGroup) -> Decimal {
         let productIDs = Set(group.members.compactMap { placements[$0]?.productID })
         return productIDs.reduce(Decimal.zero) { total, id in

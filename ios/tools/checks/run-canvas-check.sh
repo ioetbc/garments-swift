@@ -13,5 +13,5 @@ cat > "$check_bundle/Checks.app/Contents/Info.plist" <<'PLIST'
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
 PLIST
-xcrun swiftc -module-cache-path /tmp/garms-swift-modules -sdk "$sdk" -target arm64-apple-ios26.2-macabi -F "$sdk/System/iOSSupport/System/Library/Frameworks" -I "$sdk/System/iOSSupport/usr/include" -L "$sdk/System/iOSSupport/usr/lib" ios/SharedImports/*.swift ios/Garms/Imports/*.swift ios/Garms/App/GarmsAPI.swift ios/Garms/Canvas/Canvas{History,Session,Document,Geometry,SpatialIndex,Fixtures,AssetStore,InteractionController,InkView}.swift "$1" -o "$check_bundle/Checks.app/Contents/MacOS/checks"
+xcrun swiftc -module-cache-path /tmp/garms-swift-modules -sdk "$sdk" -target arm64-apple-ios26.2-macabi -F "$sdk/System/iOSSupport/System/Library/Frameworks" -I "$sdk/System/iOSSupport/usr/include" -L "$sdk/System/iOSSupport/usr/lib" ios/SharedImports/*.swift ios/Garms/Imports/*.swift ios/Garms/App/GarmsAPI.swift ios/Garms/Canvas/Canvas{History,Session,Document,Geometry,SpatialIndex,Fixtures,AssetStore,InteractionController,InkView,Renderer,OverlayView}.swift "$1" -o "$check_bundle/Checks.app/Contents/MacOS/checks"
 "$check_bundle/Checks.app/Contents/MacOS/checks"

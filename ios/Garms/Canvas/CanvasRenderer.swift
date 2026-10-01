@@ -12,6 +12,7 @@ import UIKit
     private var currentTiers: [String:Int] = [:]
     private var previousLiftedIDs: Set<String> = []
     private let groupPlate = CAShapeLayer()
+    private var animatedGroupIDs: Set<String> = []
     private var groupBackgrounds: [String: CAShapeLayer] = [:]
     private var lastZoom = 1.0
     private var zoomChanged = Date.distantPast
@@ -20,7 +21,9 @@ import UIKit
         guard size.width > 0, size.height > 0 else { return }
         let a = camera.world(CGPoint(x:-200,y:-200),viewport:size)
         let b = camera.world(CGPoint(x:size.width+200,y:size.height+200),viewport:size)
-        let visible = session.index.query(CGRect(x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y)).union(retained)
+        let visible = session.index.query(CGRect(x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y)).union(retained).filter { id in
+            session.document.placements[id].map { session.isVisible($0) } ?? false
+        }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         updatePaper(camera:camera,size:size,displayScale:displayScale)
         if hypot(camera.center.x-origin.x,camera.center.y-origin.y) > 4096 { origin = camera.center }
@@ -32,14 +35,16 @@ import UIKit
         }
         if lastZoom != camera.zoom { zoomChanged = Date(); lastZoom = camera.zoom }
         let groupLift = liftedIDs.count > 1
+        if !groupLift && !liftedIDs.isEmpty { animatedGroupIDs = [] }
         let liftedBounds = CanvasGeometry.union(liftedIDs.compactMap { session.document.placements[$0] })
         let liftCenter = liftedBounds.isNull ? WorldPoint() : WorldPoint(x:liftedBounds.midX,y:liftedBounds.midY)
         let liftScale = CanvasConfiguration.liftScale
         updateGroupBackgrounds(session: session, liftedIDs: liftedIDs)
         let oldPlateOpacity = groupPlate.presentation()?.opacity ?? groupPlate.opacity
         if groupLift {
+            animatedGroupIDs = liftedIDs
             if groupPlate.superlayer == nil { world.addSublayer(groupPlate) }
-            let rect = liftedBounds.insetBy(dx:-9/camera.zoom,dy:-9/camera.zoom)
+            let rect = liftedBounds.insetBy(dx: -CanvasConfiguration.groupBackgroundPadding, dy: -CanvasConfiguration.groupBackgroundPadding)
             groupPlate.bounds = CGRect(origin:.zero,size:rect.size)
             groupPlate.position = (liftCenter-origin).cg
             let path = UIBezierPath(rect:groupPlate.bounds).cgPath
@@ -109,7 +114,7 @@ import UIKit
     }
 
     private func updateGroupBackgrounds(session: CanvasSession, liftedIDs: Set<String>) {
-        let groups = (session.document.namedGroups ?? []).filter { $0.backgroundColour != nil }
+        let groups = (session.document.namedGroups ?? []).filter { $0.backgroundColour != nil && session.isVisible($0) }
         let ids = Set(groups.map(\.id))
         for id in Array(groupBackgrounds.keys) where !ids.contains(id) {
             groupBackgrounds.removeValue(forKey: id)?.removeFromSuperlayer()
@@ -117,7 +122,7 @@ import UIKit
         for group in groups {
             guard let colour = group.backgroundColour else { continue }
             let rect = group.bounds(in: session.document)
-                .insetBy(dx: -9/session.camera.zoom, dy: -9/session.camera.zoom)
+                .insetBy(dx: -CanvasConfiguration.groupBackgroundPadding, dy: -CanvasConfiguration.groupBackgroundPadding)
             guard !rect.isNull else { continue }
             let layer = groupBackgrounds[group.id] ?? CAShapeLayer()
             if layer.superlayer == nil { world.addSublayer(layer); groupBackgrounds[group.id] = layer }
@@ -129,19 +134,35 @@ import UIKit
             layer.zPosition = -2
             let lifted = group.members.count > 1 && Set(group.members).isSubset(of: liftedIDs)
             let wasLifted = group.members.count > 1 && Set(group.members).isSubset(of: previousLiftedIDs)
+            let allLifted = CanvasGeometry.union(liftedIDs.compactMap { session.document.placements[$0] })
+            let offset = lifted ? WorldPoint(x: rect.midX - allLifted.midX, y: rect.midY - allLifted.midY)
+                * (CanvasConfiguration.liftScale - 1) : WorldPoint()
             styleLift(layer, lifted: lifted, wasLifted: wasLifted,
-                      translation: CGPoint(x: 0, y: lifted ? -CanvasConfiguration.liftOffset/session.camera.zoom : 0),
+                      translation: CGPoint(x: offset.x, y: offset.y + (lifted ? -CanvasConfiguration.liftOffset/session.camera.zoom : 0)),
                       scale: lifted ? CanvasConfiguration.liftScale : 1, shadow: false, zoom: session.camera.zoom)
         }
     }
 
-    // Presentation frames include the actual pickup/release animation, not just its destination.
+    // Use current document positions with one shared group animation. Sampling each
+    // product’s presentation frame mixes previous-frame positions with current
+    // camera coordinates, and changes when offscreen layers are recycled.
     func displayedGroupBounds(_ group: CanvasNamedGroup, session: CanvasSession) -> CGRect {
+        let liftedBounds = CanvasGeometry.union(animatedGroupIDs.compactMap { session.document.placements[$0] })
+        let liftCenter = CGPoint(x: liftedBounds.midX, y: liftedBounds.midY)
+        let groupTransform = displayedTransform(groupPlate)
         var rect = CGRect.null
         for id in group.members {
-            if let layer = layers[id] {
-                rect = rect.union((layer.presentation() ?? layer).frame.offsetBy(dx: origin.x, dy: origin.y))
-            } else if let item = session.document.placements[id] {
+            guard let item = session.document.placements[id] else { continue }
+            if animatedGroupIDs.contains(id), !liftedBounds.isNull {
+                let local = item.bounds.offsetBy(dx: -liftCenter.x, dy: -liftCenter.y)
+                rect = rect.union(local.applying(CATransform3DGetAffineTransform(groupTransform))
+                    .offsetBy(dx: liftCenter.x, dy: liftCenter.y))
+            } else if let layer = layers[id] {
+                let local = CGRect(x: -item.width / 2, y: -item.height / 2,
+                                   width: item.width, height: item.height)
+                rect = rect.union(local.applying(CATransform3DGetAffineTransform(displayedTransform(layer)))
+                    .offsetBy(dx: item.center.x, dy: item.center.y))
+            } else {
                 rect = rect.union(item.bounds)
             }
         }
@@ -150,8 +171,19 @@ import UIKit
         let point = session.camera.screen(WorldPoint(x: rect.minX, y: rect.minY), viewport: session.viewport)
         var screen = CGRect(x: point.x, y: point.y, width: rect.width * session.camera.zoom, height: rect.height * session.camera.zoom)
         // Leave room for the lifted plate's scaled padding as well as coloured backgrounds.
-        screen = screen.insetBy(dx: -9 * CanvasConfiguration.liftScale, dy: -9 * CanvasConfiguration.liftScale)
+        let padding = CanvasConfiguration.groupBackgroundPadding * CanvasConfiguration.liftScale * session.camera.zoom
+        screen = screen.insetBy(dx: -padding, dy: -padding)
         return screen
+    }
+
+    private func displayedTransform(_ layer: CALayer) -> CATransform3D {
+        guard let animation = layer.animation(forKey: "transform") as? CABasicAnimation else {
+            return layer.transform
+        }
+        if let presentation = layer.presentation() { return presentation.transform }
+        // On the pickup frame Core Animation may not have a presentation layer yet.
+        // Start at the animation’s origin instead of briefly jumping to its end.
+        return (animation.fromValue as? NSValue)?.caTransform3DValue ?? layer.transform
     }
 
     private func updatePaper(camera:CanvasCamera, size:CGSize, displayScale:Double) {

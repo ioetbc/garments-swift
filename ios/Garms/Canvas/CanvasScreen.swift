@@ -10,6 +10,8 @@ struct CanvasScreen: View {
     @State private var sendingLogs: Set<UUID> = []
     @State private var logDelivery: [UUID: String] = [:]
     @State private var searchExpanded = false
+    @State private var showingPeople = false
+    @State private var peopleQuery = ""
     @State private var groupPlacement: StickerPlacement?
     @Environment(\.scenePhase) private var phase
     var body: some View {
@@ -19,7 +21,7 @@ struct CanvasScreen: View {
                 .searchable(text: Binding(
                     get: { session.searchQuery },
                     set: { session.searchQuery = $0 }
-                ), isPresented: $searchExpanded, prompt: "Group, brand, colour or name")
+                ), isPresented: $searchExpanded, prompt: "Search canvases")
                 .searchToolbarBehavior(.minimize)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -52,6 +54,19 @@ struct CanvasScreen: View {
                         .accessibilityHint("Shows or hides pens, eraser and colours")
                     }
                     DefaultToolbarItem(kind: .search, placement: .bottomBar)
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            searchExpanded = false
+                            session.searchQuery = ""
+                            session.isDrawing = false
+                            session.resolveInteraction?()
+                            peopleQuery = ""
+                            showingPeople = true
+                        } label: {
+                            Label("Find people", systemImage: "figure.2.arms.open")
+                        }
+                        .accessibilityHint("Opens user search and other people’s canvases")
+                    }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
                 .onChange(of: searchExpanded) { _, expanded in
@@ -108,6 +123,11 @@ struct CanvasScreen: View {
                 }
                 .presentationDetents([.height(410), .large])
                 .presentationDragIndicator(.visible)
+            }
+            .sheet(isPresented: $showingPeople) {
+                peopleDrawer
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingImports) {
                 NavigationStack {
@@ -183,6 +203,73 @@ struct CanvasScreen: View {
             }
             .task { session.imports.setActive(phase == .active) }
             .task { await session.loadAvailability() }
+    }
+
+    private var peopleDrawer: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search users", text: $peopleQuery)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .accessibilityLabel("Search users")
+                    if !peopleQuery.isEmpty {
+                        Button("Clear search", systemImage: "xmark.circle.fill") {
+                            peopleQuery = ""
+                        }
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(12)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.horizontal)
+                .padding(.top, 12)
+
+                let users = CanvasFixtures.matchingUsers(peopleQuery)
+                List {
+                    if users.isEmpty {
+                        Text("No users found.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(users) { user in
+                        Button {
+                            session.previewCanvas(user)
+                            showingPeople = false
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "person.crop.circle.fill")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.indigo)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(user.displayName).font(.subheadline.bold())
+                                    Text(user.username).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .foregroundStyle(.primary)
+                            .contentShape(Rectangle())
+                        }
+                        .disabled(!session.hasInitialLayout)
+                        .accessibilityLabel("View \(user.username)’s canvas")
+                    }
+                }
+                .listStyle(.plain)
+                .scrollDismissesKeyboard(.interactively)
+            }
+            .navigationTitle("Find people")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showingPeople = false }
+                }
+            }
+        }
     }
 
     private var photoPicker: some View {

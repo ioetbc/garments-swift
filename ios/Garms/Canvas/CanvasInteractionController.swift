@@ -43,6 +43,10 @@ import CoreGraphics
     }
     func liftImage(_ id:String, point:CGPoint, timestamp:TimeInterval? = nil) {
         guard state == .idle, session.document.placements[id] != nil else { return }
+        if let username = session.document.placements[id]?.canvasUsername {
+            liftGroup(session.document.canvasMembers(username), point: point)
+            return
+        }
         session.select(id)
         beginObject(state:.imageDrag,point:point)
         // A fresh drag can intentionally rejoin a former neighbour. Snapshot the
@@ -53,7 +57,9 @@ import CoreGraphics
     }
     func liftGroup(_ ids:[String], point:CGPoint) {
         guard state == .idle else { return }
-        let items = ids.compactMap { session.document.placements[$0] }
+        let username = ids.first.flatMap { session.document.placements[$0]?.canvasUsername }
+        let members = username.map { session.document.canvasMembers($0) } ?? ids
+        let items = members.compactMap { session.document.placements[$0] }
         guard items.count > 1 else { return }
         session.select(nil)
         originalGroups = session.committedGroups; originalDetached = session.detachedLinks
@@ -164,7 +170,7 @@ import CoreGraphics
         session.groupingPreview = nil
     }
     private func canAttract(_ moving: String, _ target: String) -> Bool {
-        !releasedMembers.contains(target) && !session.detachedLinks.contains(CanvasGroupLink(moving,target))
+        session.document.placements[target]?.canvasUsername == nil && !releasedMembers.contains(target) && !session.detachedLinks.contains(CanvasGroupLink(moving,target))
     }
     private func updateGroupingPreview(_ item: StickerPlacement) {
         let visible = CanvasGeometry.liftedBounds(item,zoom:session.camera.zoom)
@@ -203,7 +209,7 @@ import CoreGraphics
         let hits = Set(points.compactMap(hit))
         let world = points.map { session.camera.world($0,viewport:session.viewport) }
         return session.document.order.reversed().first { id in
-            guard hits.contains(id), let p = session.document.placements[id] else { return false }
+            guard hits.contains(id), let p = session.document.placements[id], p.canvasUsername == nil else { return false }
             return world.allSatisfy { p.bounds.contains($0.cg) }
         }
     }

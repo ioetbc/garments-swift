@@ -2,6 +2,63 @@ import Foundation
 import CoreGraphics
 
 nonisolated enum CanvasFixtures {
+    static let users: [CanvasProfile] = [
+        .init(username: "genevieve_123", displayName: "Genevieve"),
+        .init(username: "daisy", displayName: "Daisy")
+    ]
+
+    static func matchingUsers(_ query: String) -> [CanvasProfile] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+        return users.filter { term.isEmpty || $0.username.contains(term) || $0.displayName.lowercased().contains(term) }
+    }
+
+    static func canvas(for user: CanvasProfile) -> CanvasDocument {
+        let offset = (users.firstIndex(of: user) ?? 0) * 5
+        var document = CanvasDocument(username: user.username)
+        let isGenevieve = user.username == "genevieve_123"
+        let count = isGenevieve ? 16 * 30 : 16 * 20
+        for index in 0..<count {
+            var product = products[(index % 16 + offset) % products.count]
+            product.id = "\(user.username)/\(product.id)"
+            document.products[product.id] = product
+            let placement = StickerPlacement(id: "\(user.username)/item-\(index)", productID: product.id,
+                canvasUsername: user.username, center: .init(),
+                width: CanvasConfiguration.initialImageEdge * min(1, product.aspect),
+                height: CanvasConfiguration.initialImageEdge / max(1, product.aspect))
+            document.placements[placement.id] = placement
+            document.order.append(placement.id)
+        }
+        let memberships = fit(&document, viewport: CGSize(width: 900, height: 800))
+        let names = ["Everyday favourites", "Summer wishlist", "Going out", "Vintage finds"]
+        let colours: [CanvasGroupColour?] = [
+            nil, nil, nil,
+            .init(red: 0.96, green: 0.83, blue: 0.85),
+            .init(red: 0.98, green: 0.89, blue: 0.76),
+            .init(red: 0.97, green: 0.95, blue: 0.76),
+            .init(red: 0.83, green: 0.92, blue: 0.81),
+            .init(red: 0.79, green: 0.92, blue: 0.91),
+            .init(red: 0.82, green: 0.89, blue: 0.98),
+            .init(red: 0.89, green: 0.83, blue: 0.96)
+        ]
+        // Give each canvas a repeatable random mix, including uncoloured groups.
+        var colourSeed: UInt64 = isGenevieve ? 0x6E_6E : 0xDA_15
+        var colouredGroupCount = 0
+        document.namedGroups = memberships.enumerated().map { index, members in
+            colourSeed = colourSeed &* 6364136223846793005 &+ 1442695040888963407
+            var colour = colours[Int((colourSeed >> 32) % UInt64(colours.count))]
+            // Remove half of the coloured backgrounds, preserving the remaining colours.
+            if colour != nil {
+                colouredGroupCount += 1
+                if !colouredGroupCount.isMultiple(of: 2) { colour = nil }
+            }
+            return CanvasNamedGroup(id: "\(user.username)/group-\(index)", members: members,
+                name: names[(index + offset) % names.count],
+                backgroundColour: colour)
+        }
+        return document
+    }
+
     static let products: [SampleProduct] = [
         .init(id: "jacquemus-blue-le-paysan-the-fonccio-shirt", title: "Jacquemus Blue Le Paysan The Fonccio Shirt", category: "Shirt", asset: "jacquemus-blue-le-paysan-the-fonccio-shirt", aspect: 1569.0/3472.0, product_url: "https://www.vinted.co.uk/items/10134567125-next-top"),
         .init(id: "lemaire-beige-loose-silk-shirt", title: "Lemaire Beige Loose Silk Shirt", category: "Shirt", asset: "lemaire-beige-loose-silk-shirt", aspect: 1401.0/3472.0, product_url: "https://www.vinted.co.uk/items/10134567125-next-top"),

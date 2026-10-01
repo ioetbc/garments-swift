@@ -55,6 +55,36 @@ Server-only credentials belong in `web/.env.local` locally and the hosting provi
 - [Historical canvas implementation plan](docs/CANVAS_IMPLEMENTATION_PLAN.md)
 - [Live-link proposal](docs/LIVE_LINK_PLAN.md) — initial proposal; subsequent discussion favors evaluating Jev as the primary classifier in a Next.js backend.
 
+## Mock followed canvases
+
+Tap the people icon at the top right beside the inbox to open the **Find people** drawer. It
+shows `genevieve_123` and `daisy`; use **Search users** to
+filter by name or username, then tap a user to view their canvas. The separate
+canvas search icon searches items and groups across all open canvases while keeping
+your current view. Tap **Follow** beside the canvas title
+to follow that user. The button changes to a **tick**; tap it to unfollow and
+remove the copy. Your local username is `@you`.
+
+Genevieve has 480 products (thirty copies of her original 16). Daisy has 320 products
+(twenty copies of the original 16). Most groups on both canvases are uncoloured, with a
+repeatable random mix of soft colours on the remainder. All use the bundled fixture images in named
+collections. Viewing adds a separate preview beside your canvas, with an owner label
+and no border. Your canvas is labelled **Your canvas · @you** only while other
+canvases are shown. Canvas labels track the animated bounds during dragging.
+Canvases are initially separated by 5,000 world points, and zoom extends down to 2%. The copy retains its collection names, colours, memberships,
+and relative positions. Long-press the canvas label, a product, or a collection
+and drag to move that whole canvas; it cannot magnetically merge with your collections.
+Product details and collection edits affect only the local copy. Following and
+unfollowing support undo/redo, and following the same user twice opens the existing
+copy. This prototype is session-only: there are no accounts, persistence, or live
+updates from other users.
+
+Run the focused checks with:
+
+```sh
+zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/FollowCanvasChecks.swift
+```
+
 ## Canvas availability
 
 Product and group drawers include a multiline **Notes** field. Edits save as you

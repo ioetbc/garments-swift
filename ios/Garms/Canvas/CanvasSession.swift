@@ -27,6 +27,120 @@ import PencilKit
     @ObservationIgnored var inkDrawing = PKDrawing()
     private(set) var availability: [String: GarmsAPI.ProductClassification] = [:]
 
+    private(set) var showOtherCanvases = true
+    @ObservationIgnored private var otherCanvasesCamera: CanvasCamera?
+    var displayedCanvases: [CanvasProfile] { showOtherCanvases ? visibleCanvases : [] }
+
+    func isVisible(_ placement: StickerPlacement) -> Bool {
+        showOtherCanvases || placement.canvasUsername == nil
+    }
+
+    func isVisible(_ group: CanvasNamedGroup) -> Bool {
+        group.members.isEmpty || group.members.contains { id in
+            document.placements[id].map { isVisible($0) } ?? false
+        }
+    }
+
+    func toggleOtherCanvases() {
+        resolveInteraction?()
+        inspectedPlacement = nil
+        inspectedGroup = nil
+        selection = nil
+        if showOtherCanvases {
+            otherCanvasesCamera = camera
+            showOtherCanvases = false
+            revealCanvas(nil)
+        } else {
+            showOtherCanvases = true
+            if let previous = otherCanvasesCamera { camera = previous }
+            cameraChanged()
+        }
+    }
+
+    var visibleCanvases: [CanvasProfile] {
+        let _ = revision
+        return document.visibleCanvases ?? []
+    }
+
+    var followedCanvases: [CanvasProfile] {
+        visibleCanvases.filter { isFollowing($0) }
+    }
+
+    func isFollowing(_ user: CanvasProfile) -> Bool {
+        let _ = revision
+        return document.followedUsernames?.contains(user.username) == true
+    }
+
+    func previewCanvas(_ user: CanvasProfile) {
+        openCanvas(user, following: false)
+    }
+
+    func follow(_ user: CanvasProfile) {
+        openCanvas(user, following: true)
+    }
+
+    private func openCanvas(_ user: CanvasProfile, following: Bool) {
+        guard hasInitialLayout else { return }
+        resolveInteraction?()
+        showOtherCanvases = true
+        let before = snapshot()
+        if following && !isFollowing(user) {
+            document.followedUsernames = (document.followedUsernames ?? []) + [user.username]
+        }
+        if visibleCanvases.contains(user) {
+            complete(before.document, baseline: before)
+            if !following { revealCanvas(user.username) }
+            return
+        }
+        var copy = CanvasFixtures.canvas(for: user)
+        let source = copy.canvasBounds(user.username)
+        var occupied = (document.namedGroups ?? []).reduce(document.canvasBounds(nil)) {
+            $0.union($1.bounds(in: document))
+        }
+        if occupied.isNull { occupied = CGRect(x: camera.center.x, y: camera.center.y, width: 0, height: 0) }
+        let delta = WorldPoint(x: occupied.maxX + CanvasConfiguration.canvasSpacing - source.minX, y: occupied.minY - source.minY)
+        for id in copy.order {
+            if var placement = copy.placements[id] {
+                placement.center = placement.center + delta
+                copy.placements[id] = placement
+            }
+        }
+        document.products.merge(copy.products) { _, new in new }
+        document.placements.merge(copy.placements) { _, new in new }
+        document.order += copy.order
+        document.namedGroups = (document.namedGroups ?? []) + (copy.namedGroups ?? [])
+        document.visibleCanvases = visibleCanvases + [user]
+        complete(before.document, baseline: before)
+        revealCanvas(user.username)
+    }
+
+    func unfollow(_ user: CanvasProfile) {
+        resolveInteraction?()
+        let before = snapshot()
+        let ids = Set(document.canvasMembers(user.username))
+        let products = Set(ids.compactMap { document.placements[$0]?.productID })
+        document.placements = document.placements.filter { !ids.contains($0.key) }
+        document.products = document.products.filter { !products.contains($0.key) }
+        document.order.removeAll { ids.contains($0) }
+        document.namedGroups?.removeAll { $0.members.contains(where: ids.contains) }
+        document.visibleCanvases?.removeAll { $0.id == user.id }
+        document.followedUsernames?.removeAll { $0 == user.username }
+        complete(before.document, baseline: before)
+        revealCanvas(nil)
+    }
+
+    func revealCanvas(_ username: String?) {
+        resolveInteraction?()
+        searchQuery = ""
+        selection = nil
+        let bounds = document.canvasBounds(username).insetBy(dx: -60, dy: -100)
+        guard !bounds.isNull, viewport.width > 0, viewport.height > 0 else { return }
+        camera.center = .init(x: bounds.midX, y: bounds.midY)
+        camera.zoom = max(CanvasConfiguration.zoom.lowerBound,
+            min(1, min(viewport.width / bounds.width, max(100, viewport.height - 200) / bounds.height)))
+        cameraChanged()
+    }
+
     func classification(for product: SampleProduct) -> GarmsAPI.ProductClassification? {
         availability[product.id]
     }
@@ -82,14 +196,20 @@ import PencilKit
 
     private func updateSearchMatches() {
         let namedGroups = document.namedGroups ?? []
+        guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            dimmedPlacementIDs = []
+            dimmedGroupIDs = []
+            return
+        }
         let groupMatches = Set(namedGroups.filter { CanvasSearch.matches($0.name, query: searchQuery) }.flatMap(\.members))
         let productMatches = Set(document.products.values.filter { $0.matchesSearch(searchQuery) }.map(\.id))
         dimmedPlacementIDs = Set(document.placements.values.filter {
             !groupMatches.contains($0.id) && !productMatches.contains($0.productID)
         }.map(\.id))
         dimmedGroupIDs = Set(namedGroups.filter {
-            !CanvasSearch.matches($0.name, query: searchQuery) &&
-                $0.members.allSatisfy { dimmedPlacementIDs.contains($0) }
+            $0.members.isEmpty
+                ? !CanvasSearch.matches($0.name, query: searchQuery)
+                : $0.members.allSatisfy { dimmedPlacementIDs.contains($0) }
         }.map(\.id))
     }
     var selected: [StickerPlacement] { selection.flatMap { document.placements[$0] }.map { [$0] } ?? [] }
@@ -312,11 +432,16 @@ import PencilKit
     func nudge(x: Double, y: Double) {
         guard let p = selected.first else { return }
         let before = document
-        document.placements[p.id]?.center = p.center + .init(x:x/camera.zoom,y:y/camera.zoom)
+        let ids = p.canvasUsername.map { document.canvasMembers($0) } ?? [p.id]
+        for id in ids {
+            if let item = document.placements[id] {
+                document.placements[id]?.center = item.center + .init(x:x/camera.zoom,y:y/camera.zoom)
+            }
+        }
         complete(before)
     }
     func resize(_ factor: Double) {
-        guard let p = selected.first else { return }
+        guard let p = selected.first, p.canvasUsername == nil else { return }
         let before = document
         document.placements[p.id] = CanvasGeometry.scaled([p],anchor:p.center,destination:p.center,scale:factor).first
         complete(before)

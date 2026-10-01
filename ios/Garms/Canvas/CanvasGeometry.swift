@@ -13,7 +13,10 @@ nonisolated struct WorldPoint: Codable, Equatable, Sendable {
     var valid: Bool { x.isFinite && y.isFinite && abs(x) < 1e12 && abs(y) < 1e12 }
 }
 nonisolated enum CanvasConfiguration {
-    static let zoom = 0.1...18.0
+    static let zoom = 0.02...18.0
+    static let canvasSpacing = 5_000.0
+    // World-space padding scales with products as the camera zooms.
+    static let groupBackgroundPadding = 9.0
     static let edge = 1.0...8192.0
     static let initialImageEdge = 150.0 // Screen points at insertion; world points for fixtures at zoom 1.
     static let cell = 512.0
