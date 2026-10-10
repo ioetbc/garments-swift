@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CLERK_PUBLISHABLE_KEY</key>
+    <string>pk_live_REPLACE_WITH_CLERK_PRODUCTION_KEY</string>
+    <key>CONVEX_URL</key>
+    <string>https://REPLACE_WITH_PROD_DEPLOYMENT.convex.cloud</string>
+</dict>
+</plist>

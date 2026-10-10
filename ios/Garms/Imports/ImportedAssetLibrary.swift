@@ -4,7 +4,7 @@ import ImageIO
 /// Product images by file key: uploaded once, cached on disk, downloaded when another device added them.
 @MainActor final class ImportedAssetLibrary {
     private let sync: CanvasSync
-    private let directory = URL.cachesDirectory.appending(path: "GarmsFiles", directoryHint: .isDirectory)
+    private let directory = LocalUser.directory.appending(path: "files", directoryHint: .isDirectory)
     /// Download URLs for files this device has not cached, from the latest snapshot.
     var urls: [String: URL] = [:] { didSet { if urls != oldValue { urlsChanged?() } } }
     var urlsChanged: (() -> Void)?

@@ -23,23 +23,88 @@ describe("first request", () => {
 });
 
 describe("identity", () => {
-  test("with no identity and no dev User, every public function rejects", async () => {
+  test("with no identity, every public function rejects", async () => {
+    vi.stubEnv("GARMS_DEV_USER", "will");
     const t = convexTest(schema, modules);
     const canvas = await t.withIdentity(alice).mutation(api.canvases.start, {});
     await expect(t.mutation(api.canvases.start, {})).rejects.toThrow(/Not signed in/);
+    await expect(t.action(api.users.remove, {})).rejects.toThrow(/Not signed in/);
     await expect(t.query(api.canvases.load, { canvas })).rejects.toThrow(/Not signed in/);
     await expect(t.mutation(api.canvases.apply, { canvas, changes: emptyChanges() })).rejects.toThrow(/Not signed in/);
     await expect(t.mutation(api.canvases.saveViewport, { canvas, viewport: { x: 1, y: 1, zoom: 1 } })).rejects.toThrow(/Not signed in/);
     await expect(t.mutation(api.products.remove, { product: "p" })).rejects.toThrow(/Not signed in/);
     await expect(t.mutation(api.files.generateUploadUrl, {})).rejects.toThrow(/Not signed in/);
+    await expect(t.mutation(api.files.attach, { key: "k", storageId: await t.run((ctx) => ctx.storage.store(new Blob(["x"]))) })).rejects.toThrow(/Not signed in/);
+  });
+});
+
+describe("deleting a User", () => {
+  const aliceClerk = { ...alice, subject: "user_alice" };
+
+  /** Gives the User a Canvas with a Product, two Stickers, a Group, a detached link and two files. */
+  async function populate(t: ReturnType<typeof convexTest>, who: { tokenIdentifier: string }, prefix: string) {
+    const as = t.withIdentity(who);
+    const canvas = await as.mutation(api.canvases.start, {});
+    const { groups: [recent] } = await as.query(api.canvases.load, { canvas });
+    const storage = [];
+    for (const name of ["cutout", "original"]) {
+      const storageId = await t.run((ctx) => ctx.storage.store(new Blob([prefix + name])));
+      await as.mutation(api.files.attach, { key: `${prefix}-${name}`, storageId });
+      storage.push(storageId);
+    }
+    await as.mutation(api.canvases.apply, { canvas, changes: { ...emptyChanges(),
+      products: [{ ...product(prefix), cutout: `${prefix}-cutout`, original: `${prefix}-original` }],
+      stickers: [sticker(`${prefix}-s1`, prefix), sticker(`${prefix}-s2`, prefix)],
+      groups: [{ ...recent, members: [`${prefix}-s1`, `${prefix}-s2`] }],
+      links: [{ first: `${prefix}-s1`, second: `${prefix}-s2` }] } });
+    return { canvas, storage };
+  }
+
+  const rowCounts = (t: ReturnType<typeof convexTest>) => t.run(async (ctx) => {
+    const counts: Record<string, number> = {};
+    for (const table of ["users", "canvases", "products", "files", "stickers", "groups", "detachedLinks"] as const) {
+      counts[table] = (await ctx.db.query(table).collect()).length;
+    }
+    return counts;
   });
 
-  test("with no identity on a dev deployment, acts as the named dev User", async () => {
-    vi.stubEnv("GARMS_DEV_USER", "will");
+  function stubClerk(status: number) {
+    vi.stubEnv("CLERK_SECRET_KEY", "sk_test");
+    const fetch = vi.fn(async () => new Response("{}", { status }));
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("removes everything the User owns, then the Clerk user, and leaves other Users untouched", async () => {
     const t = convexTest(schema, modules);
-    const anonymous = await t.mutation(api.canvases.start, {});
-    const named = await t.withIdentity({ tokenIdentifier: "dev|will" }).mutation(api.canvases.start, {});
-    expect(anonymous).toBe(named);
+    const a = await populate(t, aliceClerk, "a");
+    const b = await populate(t, bob, "b");
+    const bobBefore = await t.withIdentity(bob).query(api.canvases.load, { canvas: b.canvas });
+    const fetch = stubClerk(200);
+
+    await t.withIdentity(aliceClerk).action(api.users.remove, {});
+
+    expect(await rowCounts(t)).toEqual({ users: 1, canvases: 1, products: 1, files: 2, stickers: 2, groups: 1, detachedLinks: 1 });
+    expect(await t.run(async (ctx) => Promise.all(a.storage.map((id) => ctx.storage.get(id))))).toEqual([null, null]);
+    expect(await t.withIdentity(bob).query(api.canvases.load, { canvas: b.canvas })).toEqual(bobBefore);
+    expect(fetch).toHaveBeenCalledWith("https://api.clerk.com/v1/users/user_alice",
+      expect.objectContaining({ method: "DELETE", headers: { Authorization: "Bearer sk_test" } }));
+  });
+
+  test("when Clerk fails, the User's data is still gone and deleting again succeeds", async () => {
+    const t = convexTest(schema, modules);
+    await populate(t, aliceClerk, "a");
+    stubClerk(500);
+    await expect(t.withIdentity(aliceClerk).action(api.users.remove, {})).rejects.toThrow();
+    expect(Object.values(await rowCounts(t))).toEqual([0, 0, 0, 0, 0, 0, 0]);
+
+    stubClerk(404);
+    await t.withIdentity(aliceClerk).action(api.users.remove, {});
+    // Signing in again after deletion starts from an empty Canvas.
+    const canvas = await t.withIdentity(aliceClerk).mutation(api.canvases.start, {});
+    const fresh = await t.withIdentity(aliceClerk).query(api.canvases.load, { canvas });
+    expect([fresh.products.length, fresh.stickers.length, fresh.groups.map((g) => g.isRecentUploads)]).toEqual([0, 0, [true]]);
   });
 });
 
