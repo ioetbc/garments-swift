@@ -24,6 +24,8 @@ const eslintConfig = defineConfig([
         "error",
         { selector: "NewExpression[callee.name='Error']", message: "Use a Schema.TaggedError inside Effect, or ConvexError at the handler edge." },
       ],
+      // No React here; Effect's Service.use is not a hook.
+      "react-hooks/rules-of-hooks": "off",
     },
   },
 ]);

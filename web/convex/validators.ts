@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { type Infer, v } from "convex/values";
 
 /** Centre and zoom a Canvas was last viewed at. */
 export const viewport = v.object({ x: v.number(), y: v.number(), zoom: v.number() });
@@ -69,3 +69,16 @@ export const changeSet = v.object({
   links: v.array(link),
   deletedLinks: v.array(link),
 });
+
+/** One sample garment the seed script uploads. */
+export const sample = v.object({
+  title: v.string(), category: v.string(), aspect: v.number(), sourceUrl: v.string(), storageId: v.id("_storage"),
+});
+
+export type Viewport = Infer<typeof viewport>;
+export type Product = Infer<typeof product>;
+export type Sticker = Infer<typeof sticker>;
+export type Group = Infer<typeof group>;
+export type Link = Infer<typeof link>;
+export type ChangeSet = Infer<typeof changeSet>;
+export type Sample = Infer<typeof sample>;
