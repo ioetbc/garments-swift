@@ -3,8 +3,15 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { Auth } from "./auth";
 import { CanvasRepository } from "./canvas.repository";
 import { NotSignedIn } from "./errors";
+import { FileRepository } from "./file.repository";
 import { GroupRepository } from "./group.repository";
+import { LinkRepository } from "./link.repository";
+import { ProductRepository } from "./product.repository";
+import { StickerRepository } from "./sticker.repository";
 import { UserRepository } from "./user.repository";
+
+// Rows per kind per transaction, well inside Convex's per-transaction limits.
+const BATCH = 200;
 
 /** A User and their Canvas. */
 export type Owner = { readonly user: Id<"users">; readonly canvas: Id<"canvases"> };
@@ -17,12 +24,21 @@ export class UserService extends Context.Service<UserService, {
   readonly ensureCaller: Effect.Effect<Owner, NotSignedIn>;
   /** The User for this token, created with one Canvas and its Recent uploads Group on first request. */
   ensure(token: string): Effect.Effect<Owner>;
+  /**
+   * Deletes up to one batch of everything the User owns, the User last.
+   * Returns true once the User is gone; safe to repeat after a failure part way.
+   */
+  deleteBatch(token: string): Effect.Effect<boolean>;
 }>()("garms/UserService") {
   static readonly layer = Layer.effect(UserService, Effect.gen(function* () {
     const auth = yield* Auth;
     const users = yield* UserRepository;
     const canvases = yield* CanvasRepository;
     const groups = yield* GroupRepository;
+    const stickers = yield* StickerRepository;
+    const links = yield* LinkRepository;
+    const products = yield* ProductRepository;
+    const files = yield* FileRepository;
 
     const ensure = Effect.fn("UserService.ensure")(function* (token: string) {
       const existing = yield* users.byToken(token);
@@ -39,10 +55,27 @@ export class UserService extends Context.Service<UserService, {
       return { user, canvas };
     });
 
+    const deleteBatch = Effect.fn("UserService.deleteBatch")(function* (token: string) {
+      const user = yield* users.byToken(token);
+      if (!user) return true;
+      for (const canvas of yield* canvases.ofOwner(user._id, BATCH)) {
+        const removed = (yield* stickers.removeOnCanvas(canvas._id, BATCH))
+          + (yield* groups.removeOnCanvas(canvas._id, BATCH))
+          + (yield* links.removeOnCanvas(canvas._id, BATCH));
+        if (removed) return false;
+        yield* canvases.remove(canvas._id);
+      }
+      if (yield* products.removeOfOwner(user._id, BATCH)) return false;
+      if (yield* files.removeOfOwner(user._id, BATCH)) return false;
+      yield* users.remove(user._id);
+      return true;
+    });
+
     return UserService.of({
       caller: Effect.flatMap(auth.token, (token) => users.byToken(token)),
       ensureCaller: Effect.flatMap(auth.token, ensure),
       ensure,
+      deleteBatch,
     });
   }));
 }

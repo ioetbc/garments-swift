@@ -1,6 +1,6 @@
 // Seeds a developer account's Canvas with the sample Products on the configured Convex deployment.
 // Run from web/: bun seed/seed-canvas.ts <tokenIdentifier> [count]
-// For the dev-User fallback the tokenIdentifier is "dev|<GARMS_DEV_USER>".
+// Sign in on the app first; the tokenIdentifier is on your row in the `users` table.
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import samples from "./samples.json";

@@ -14,6 +14,8 @@
 		ABCD00000000000000000009 /* SharedImports/SharedImportInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000004 /* SharedImports/SharedImportInbox.swift */; };
 		ABCD0000000000000000000A /* GarmsShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* GarmsShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		ABCD00000000000000000020 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = ABCD00000000000000000021 /* ConvexMobile */; };
+		ABCD00000000000000000023 /* ClerkKit in Frameworks */ = {isa = PBXBuildFile; productRef = ABCD00000000000000000024 /* ClerkKit */; };
+		ABCD00000000000000000026 /* ClerkConvex in Frameworks */ = {isa = PBXBuildFile; productRef = ABCD00000000000000000027 /* ClerkConvex */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -62,6 +64,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				ABCD00000000000000000020 /* ConvexMobile in Frameworks */,
+				ABCD00000000000000000023 /* ClerkKit in Frameworks */,
+				ABCD00000000000000000026 /* ClerkConvex in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +122,8 @@
 			name = Garms;
 			packageProductDependencies = (
 				ABCD00000000000000000021 /* ConvexMobile */,
+				ABCD00000000000000000024 /* ClerkKit */,
+				ABCD00000000000000000027 /* ClerkConvex */,
 			);
 			productName = Garms;
 			productReference = 440861DA3065690500EF5C4B /* Garms.app */;
@@ -165,6 +171,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				ABCD00000000000000000022 /* XCRemoteSwiftPackageReference "convex-swift" */,
+				ABCD00000000000000000025 /* XCRemoteSwiftPackageReference "clerk-ios" */,
+				ABCD00000000000000000028 /* XCRemoteSwiftPackageReference "clerk-convex-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 440861DB3065690500EF5C4B /* Products */;
@@ -382,6 +390,7 @@
 				DEVELOPMENT_TEAM = W225T5YY85;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Configuration/Release-Info.plist";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -487,6 +496,22 @@
 				minimumVersion = 0.8.1;
 			};
 		};
+		ABCD00000000000000000025 /* XCRemoteSwiftPackageReference "clerk-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/clerk/clerk-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.6.1;
+			};
+		};
+		ABCD00000000000000000028 /* XCRemoteSwiftPackageReference "clerk-convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/clerk/clerk-convex-swift";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.1.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -494,6 +519,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = ABCD00000000000000000022 /* XCRemoteSwiftPackageReference "convex-swift" */;
 			productName = ConvexMobile;
+		};
+		ABCD00000000000000000024 /* ClerkKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABCD00000000000000000025 /* XCRemoteSwiftPackageReference "clerk-ios" */;
+			productName = ClerkKit;
+		};
+		ABCD00000000000000000027 /* ClerkConvex */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABCD00000000000000000028 /* XCRemoteSwiftPackageReference "clerk-convex-swift" */;
+			productName = ClerkConvex;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

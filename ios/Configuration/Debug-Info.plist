@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CLERK_PUBLISHABLE_KEY</key>
+    <string>pk_test_REPLACE_WITH_CLERK_DEVELOPMENT_KEY</string>
     <key>CONVEX_URL</key>
     <string>https://qualified-jellyfish-629.convex.cloud</string>
     <key>GARMS_API_BASE_URL</key>

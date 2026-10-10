@@ -14,6 +14,8 @@ export class FileRepository extends Context.Service<FileRepository, {
   repoint(file: Doc<"files">, storageId: Id<"_storage">): Effect.Effect<void>;
   /** Deletes the key and its blob. */
   remove(file: Doc<"files">): Effect.Effect<void>;
+  /** Deletes up to `limit` of the User's keys and their blobs, returning how many it deleted. */
+  removeOfOwner(owner: Id<"users">, limit: number): Effect.Effect<number>;
 }>()("garms/FileRepository") {
   static readonly layer = Layer.effect(FileRepository, Effect.gen(function* () {
     const { read, write } = yield* ConvexContext;
@@ -30,6 +32,14 @@ export class FileRepository extends Context.Service<FileRepository, {
       remove: (file) => write(async (ctx) => {
         await ctx.storage.delete(file.storageId);
         await ctx.db.delete(file._id);
+      }),
+      removeOfOwner: (owner, limit) => write(async (ctx) => {
+        const files = await ctx.db.query("files").withIndex("by_owner", (q) => q.eq("owner", owner)).take(limit);
+        for (const file of files) {
+          await ctx.storage.delete(file.storageId);
+          await ctx.db.delete(file._id);
+        }
+        return files.length;
       }),
     });
   }));

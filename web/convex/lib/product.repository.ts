@@ -10,6 +10,8 @@ export class ProductRepository extends Context.Service<ProductRepository, {
   /** Writes the Product over `existing`, the row `byKey` found for its key, or inserts it when null. */
   save(owner: Id<"users">, product: Product, existing: Doc<"products"> | null): Effect.Effect<void>;
   remove(id: Id<"products">): Effect.Effect<void>;
+  /** Deletes up to `limit` of the User's Products, returning how many it deleted. */
+  removeOfOwner(owner: Id<"users">, limit: number): Effect.Effect<number>;
 }>()("garms/ProductRepository") {
   static readonly layer = Layer.effect(ProductRepository, Effect.gen(function* () {
     const { read, write } = yield* ConvexContext;
@@ -21,6 +23,11 @@ export class ProductRepository extends Context.Service<ProductRepository, {
         else await ctx.db.insert("products", { owner, ...product });
       }),
       remove: (id) => write((ctx) => ctx.db.delete(id)),
+      removeOfOwner: (owner, limit) => write(async (ctx) => {
+        const rows = await ctx.db.query("products").withIndex("by_owner", (q) => q.eq("owner", owner)).take(limit);
+        for (const row of rows) await ctx.db.delete(row._id);
+        return rows.length;
+      }),
     });
   }));
 }

@@ -12,6 +12,8 @@ export class GroupRepository extends Context.Service<GroupRepository, {
   setMembers(id: Id<"groups">, members: Array<string>): Effect.Effect<void>;
   setEmptyCenter(id: Id<"groups">, center: { x: number; y: number }): Effect.Effect<void>;
   remove(id: Id<"groups">): Effect.Effect<void>;
+  /** Deletes up to `limit` of the Canvas's rows, returning how many it deleted. */
+  removeOnCanvas(canvas: Id<"canvases">, limit: number): Effect.Effect<number>;
 }>()("garms/GroupRepository") {
   static readonly layer = Layer.effect(GroupRepository, Effect.gen(function* () {
     const { read, write } = yield* ConvexContext;
@@ -25,6 +27,11 @@ export class GroupRepository extends Context.Service<GroupRepository, {
       setMembers: (id, members) => write((ctx) => ctx.db.patch(id, { members })),
       setEmptyCenter: (id, emptyCenter) => write((ctx) => ctx.db.patch(id, { emptyCenter })),
       remove: (id) => write((ctx) => ctx.db.delete(id)),
+      removeOnCanvas: (canvas, limit) => write(async (ctx) => {
+        const rows = await ctx.db.query("groups").withIndex("by_canvas", (q) => q.eq("canvas", canvas)).take(limit);
+        for (const row of rows) await ctx.db.delete(row._id);
+        return rows.length;
+      }),
     });
   }));
 }

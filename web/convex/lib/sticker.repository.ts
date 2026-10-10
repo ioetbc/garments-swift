@@ -12,6 +12,8 @@ export class StickerRepository extends Context.Service<StickerRepository, {
   /** Writes the Sticker over `existing`, the row `byKey` found for its key, or inserts it when null. */
   save(canvas: Id<"canvases">, sticker: Sticker, existing: Doc<"stickers"> | null): Effect.Effect<void>;
   remove(id: Id<"stickers">): Effect.Effect<void>;
+  /** Deletes up to `limit` of the Canvas's rows, returning how many it deleted. */
+  removeOnCanvas(canvas: Id<"canvases">, limit: number): Effect.Effect<number>;
 }>()("garms/StickerRepository") {
   static readonly layer = Layer.effect(StickerRepository, Effect.gen(function* () {
     const { read, write } = yield* ConvexContext;
@@ -24,6 +26,11 @@ export class StickerRepository extends Context.Service<StickerRepository, {
         else await ctx.db.insert("stickers", { canvas, ...sticker });
       }),
       remove: (id) => write((ctx) => ctx.db.delete(id)),
+      removeOnCanvas: (canvas, limit) => write(async (ctx) => {
+        const rows = await ctx.db.query("stickers").withIndex("by_canvas", (q) => q.eq("canvas", canvas)).take(limit);
+        for (const row of rows) await ctx.db.delete(row._id);
+        return rows.length;
+      }),
     });
   }));
 }

@@ -24,10 +24,13 @@ export class FileAlreadyAttached extends Data.TaggedError("FileAlreadyAttached")
 /** Seeding refuses a Canvas that already has Stickers. */
 export class CanvasNotEmpty extends Data.TaggedError("CanvasNotEmpty") {}
 
+/** Clerk did not delete the User's sign-in after their data was deleted. */
+export class ClerkDeleteFailed extends Data.TaggedError("ClerkDeleteFailed")<{ readonly cause: unknown }> {}
+
 /** Every failure a Convex handler can report to its caller. */
 export type GarmsError =
   | NotSignedIn | CanvasNotFound | ProductNotFound | ForeignRows
-  | InvalidInput | FileKeyTaken | FileAlreadyAttached | CanvasNotEmpty;
+  | InvalidInput | FileKeyTaken | FileAlreadyAttached | CanvasNotEmpty | ClerkDeleteFailed;
 
 /** The message the client sees for each failure. */
 export function messageOf(error: GarmsError): string {
@@ -40,5 +43,6 @@ export function messageOf(error: GarmsError): string {
     case "FileKeyTaken": return "File key is taken.";
     case "FileAlreadyAttached": return "File is already attached.";
     case "CanvasNotEmpty": return "This account's Canvas already has Stickers.";
+    case "ClerkDeleteFailed": return "Your data was deleted, but your sign-in could not be removed. Delete your account again to finish.";
   }
 }

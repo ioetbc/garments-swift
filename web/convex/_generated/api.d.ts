@@ -16,6 +16,7 @@ import type * as lib_edge from "../lib/edge.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as products from "../products.js";
 import type * as seed from "../seed.js";
+import type * as users from "../users.js";
 import type * as validators from "../validators.js";
 
 import type {
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   "lib/errors": typeof lib_errors;
   products: typeof products;
   seed: typeof seed;
+  users: typeof users;
   validators: typeof validators;
 }>;
 
