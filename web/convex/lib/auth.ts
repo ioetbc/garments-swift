@@ -1,18 +1,18 @@
+import type { Auth, UserIdentity } from "convex/server";
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
-/**
- * Identifies the caller from the auth identity. With no identity, a dev
- * deployment may act as the single User named by GARMS_DEV_USER; that variable
- * is never set on prod and is removed when Clerk lands.
- */
-export async function callerToken(ctx: QueryCtx): Promise<string> {
+/** The caller's auth identity. A request with none is always rejected. */
+export async function callerIdentity(ctx: { auth: Auth }): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity();
-  if (identity) return identity.tokenIdentifier;
-  const devUser = process.env.GARMS_DEV_USER;
-  if (devUser) return `dev|${devUser}`;
-  throw new ConvexError("Not signed in.");
+  if (!identity) throw new ConvexError("Not signed in.");
+  return identity;
+}
+
+/** Identifies the caller from the auth identity. */
+export async function callerToken(ctx: QueryCtx): Promise<string> {
+  return (await callerIdentity(ctx)).tokenIdentifier;
 }
 
 /** The calling User, or null before their first request created them. */

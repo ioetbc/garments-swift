@@ -51,20 +51,29 @@ Server-only credentials belong in `web/.env.local` locally and the hosting provi
 ## Convex backend
 
 Every Canvas, Product, Sticker and Group is stored in Convex and scoped to the User
-from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Until sign-in lands, a
-**dev** deployment with `GARMS_DEV_USER` set treats requests without an identity as that
-one User. Never set `GARMS_DEV_USER` on a production deployment.
+from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Users sign in with Apple
+through Clerk (`docs/adr/0001`); a request with no identity is always rejected. Each Convex
+deployment is paired with one Clerk instance: dev ↔ Clerk development, prod ↔ Clerk production.
+In each Clerk instance, enable Sign in with Apple as the only method, register the iOS app
+as a native application, and activate the Convex integration.
 
 ```sh
 cd web
+npx convex env set CLERK_FRONTEND_API_URL https://<instance>.clerk.accounts.dev  # the paired Clerk instance
+npx convex env set CLERK_SECRET_KEY sk_test_…  # lets deleting a User remove their Clerk user
 npx convex dev                         # local or dev deployment; regenerates convex/_generated
-npx convex env set GARMS_DEV_USER will # dev only
 npx vitest run                         # backend tests (convex-test, in memory)
-bun seed/seed-canvas.ts "dev|will"     # optional: fill that account with the sample Products
+bun seed/seed-canvas.ts "<tokenIdentifier>"  # optional: fill your User with the sample Products
 ```
 
-The iOS Debug build reads `CONVEX_URL` from `ios/Configuration/Debug-Info.plist`
-(`http://127.0.0.1:3210` for a local deployment in the simulator) or the scheme environment.
+To seed, sign in on the app once, then copy your `tokenIdentifier` from the `users` table
+in the Convex dashboard.
+
+The iOS app reads `CONVEX_URL` and `CLERK_PUBLISHABLE_KEY` from
+`ios/Configuration/Debug-Info.plist` (Clerk development, Convex dev) or
+`ios/Configuration/Release-Info.plist` (Clerk production, Convex prod). Debug builds can
+override `CONVEX_URL` from the scheme environment (`http://127.0.0.1:3210` for a local
+deployment in the simulator).
 A new User starts with an empty Canvas holding only **Recent uploads**. Edits save when each
 gesture ends; offline, the last loaded Canvas stays viewable and editing is disabled.
 

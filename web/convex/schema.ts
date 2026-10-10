@@ -12,6 +12,7 @@ export default defineSchema({
     .index("by_owner", ["owner"]),
   files: defineTable({ owner: v.id("users"), key: v.string(), storageId: v.id("_storage") })
     .index("by_key", ["key"])
+    .index("by_owner", ["owner"])
     .index("by_storage", ["storageId"]),
   stickers: defineTable({ canvas: v.id("canvases"), ...sticker.fields })
     .index("by_key", ["key"])

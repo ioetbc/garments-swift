@@ -14,6 +14,7 @@ import type * as lib_auth from "../lib/auth.js";
 import type * as lib_products from "../lib/products.js";
 import type * as products from "../products.js";
 import type * as seed from "../seed.js";
+import type * as users from "../users.js";
 import type * as validators from "../validators.js";
 
 import type {
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   "lib/products": typeof lib_products;
   products: typeof products;
   seed: typeof seed;
+  users: typeof users;
   validators: typeof validators;
 }>;
 

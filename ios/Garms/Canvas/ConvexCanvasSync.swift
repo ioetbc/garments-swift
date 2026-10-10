@@ -7,25 +7,14 @@ extension CanvasChangeSet: ConvexEncodable {}
 /// CanvasSync over Convex: one subscription to the whole Canvas and one mutation per committed edit.
 /// The last snapshot is kept on disk so the Canvas can be viewed offline.
 @MainActor final class ConvexCanvasSync: CanvasSync {
-    private let client: ConvexClient
+    private let client: ConvexClientWithAuth<String>
     private var canvas: String?
     private var connected = false
+    private var authenticated = false
     private var subscriptions: Set<AnyCancellable> = []
-    // ponytail: one cached Canvas per device; key it by User when sign-in lands.
-    private let cache = URL.cachesDirectory.appending(path: "canvas.json")
+    private var cache: URL { LocalUser.directory.appending(path: "canvas.json") }
 
-    init(deploymentURL: String) { client = ConvexClient(deploymentUrl: deploymentURL) }
-
-    /// The deployment from CONVEX_URL (scheme environment in Debug, Info.plist otherwise).
-    static func configured() -> ConvexCanvasSync {
-        #if DEBUG
-        let address = ProcessInfo.processInfo.environment["CONVEX_URL"]
-        #else
-        let address: String? = nil
-        #endif
-        let url = address ?? Bundle.main.object(forInfoDictionaryKey: "CONVEX_URL") as? String ?? ""
-        return ConvexCanvasSync(deploymentURL: url)
-    }
+    init(client: ConvexClientWithAuth<String>) { self.client = client }
 
     func connect(snapshot: @escaping @MainActor (CanvasRemote) -> Void, online: @escaping @MainActor (Bool) -> Void) {
         if let data = try? Data(contentsOf: cache), let cached = try? JSONDecoder().decode(CanvasRemote.self, from: data) {
@@ -33,6 +22,12 @@ extension CanvasChangeSet: ConvexEncodable {}
         }
         // Editable only once connected and the Canvas is known, so no edit is sent before it can be saved.
         online(false)
+        client.authState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                if case .authenticated = state { self?.authenticated = true } else { self?.authenticated = false }
+            }
+            .store(in: &subscriptions)
         client.watchWebSocketState()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
@@ -41,19 +36,27 @@ extension CanvasChangeSet: ConvexEncodable {}
                 online(connected && canvas != nil)
             }
             .store(in: &subscriptions)
-        Task { [weak self] in
-            // The first request creates the User and their Canvas; retry until reachable.
-            while let self, self.canvas == nil {
-                do { self.canvas = try await self.client.mutation("canvases:start") }
-                catch { try? await Task.sleep(for: .seconds(3)) }
+        Task { [weak self, client] in
+            // The first request creates the User and their Canvas; retry until reachable and authenticated.
+            // Held weakly between attempts, so teardown ends the loop.
+            var canvas: String?
+            while canvas == nil, self != nil {
+                do { canvas = try await client.mutation("canvases:start") }
+                catch {
+                    try? await Task.sleep(for: .seconds(3))
+                    // Launching offline leaves Convex unauthenticated; retry from Clerk's cached session.
+                    if self?.authenticated == false { _ = await client.loginFromCache() }
+                }
             }
-            guard let self, let canvas = self.canvas else { return }
+            guard let self, let canvas else { return }
+            self.canvas = canvas
             online(self.connected)
             self.client.subscribe(to: "canvases:load", with: ["canvas": canvas], yielding: CanvasRemote.self)
                 .receive(on: DispatchQueue.main)
                 .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] remote in
                     snapshot(remote)
                     guard let self, let data = try? JSONEncoder().encode(remote) else { return }
+                    try? FileManager.default.createDirectory(at: LocalUser.directory, withIntermediateDirectories: true)
                     try? data.write(to: self.cache, options: .atomic)
                 })
                 .store(in: &self.subscriptions)

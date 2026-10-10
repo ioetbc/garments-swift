@@ -3,7 +3,8 @@ import UIKit
 import PhotosUI
 
 struct CanvasScreen: View {
-    @State private var session = CanvasSession(sync: ConvexCanvasSync.configured())
+    let session: CanvasSession
+    let onSettings: () -> Void
     @State private var statuses: [String: String] = [:]
     @State private var showingImports = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
@@ -39,6 +40,10 @@ struct CanvasScreen: View {
                     if session.isDrawing {
                         ToolbarItem(placement: .topBarLeading) {
                             Button("Done", systemImage: "checkmark") { session.isDrawing = false }
+                        }
+                    } else {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button("Settings", systemImage: "person.crop.circle") { onSettings() }
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
