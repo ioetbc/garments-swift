@@ -11,7 +11,7 @@ ios/
     App/          App entry point and root view
     Canvas/       Canvas models, rendering, gestures and details
     Assets.xcassets/
-  tools/          Fixture generator and standalone checks (check fixtures live in tools/checks/support)
+  tools/          Standalone checks (their fixtures live in tools/checks/support)
 web/              Next.js website and API routes
   convex/         Convex backend: schema, per-User functions and tests
   seed/           Developer-only sample Products and the seed script
