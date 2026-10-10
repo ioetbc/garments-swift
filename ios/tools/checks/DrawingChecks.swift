@@ -3,7 +3,7 @@ import UIKit
 
 @main struct DrawingChecks {
     @MainActor static func main() {
-        let session = CanvasSession()
+        let session = CanvasFixtures.session().0
         let canvas = CanvasInkView(session: session)
         canvas.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         session.camera = CanvasCamera(center: WorldPoint(x: 195, y: 422), zoom: 1)

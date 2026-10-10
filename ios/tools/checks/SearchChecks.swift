@@ -3,7 +3,7 @@ import Foundation
 @main struct SearchChecks {
     @MainActor static func main() {
         let products = CanvasFixtures.products
-        func matches(_ query: String) -> [SampleProduct] {
+        func matches(_ query: String) -> [Product] {
             products.filter { $0.matchesSearch(query) }
         }
         precondition(matches("").count == products.count)
@@ -18,8 +18,7 @@ import Foundation
         precondition(matches("carré").count == 1)
         precondition(matches("lemaire blue").isEmpty)
         precondition(matches("nonexistent").isEmpty)
-        let session = CanvasSession()
-        session.updateViewport(CGSize(width: 390, height: 844))
+        let session = CanvasFixtures.session(laidOut: true).0
         let group = session.document.namedGroups!.first!
         session.updateGroup(group.id, name: "Summer café picks", backgroundColour: .init(red: 0.84, green: 0.92, blue: 0.83))
         session.searchQuery = "CAFE summer"

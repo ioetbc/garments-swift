@@ -11,9 +11,10 @@ ios/
     App/          App entry point and root view
     Canvas/       Canvas models, rendering, gestures and details
     Assets.xcassets/
-    Samples/      Bundled sample products and images
-  tools/          Fixture generator and standalone checks
+  tools/          Fixture generator and standalone checks (check fixtures live in tools/checks/support)
 web/              Next.js website and API routes
+  convex/         Convex backend: schema, per-User functions and tests
+  seed/           Developer-only sample Products and the seed script
 docs/             Product specification, research and feature plans
 ```
 
@@ -47,6 +48,26 @@ For Release builds, configure the target's `INFOPLIST_KEY_GARMS_API_BASE_URL` bu
 
 Server-only credentials belong in `web/.env.local` locally and the hosting provider's environment settings when deployed. Configure the website deployment's root directory as `web`. The prototype shared-link endpoint is described below.
 
+## Convex backend
+
+Every Canvas, Product, Sticker and Group is stored in Convex and scoped to the User
+from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Until sign-in lands, a
+**dev** deployment with `GARMS_DEV_USER` set treats requests without an identity as that
+one User. Never set `GARMS_DEV_USER` on a production deployment.
+
+```sh
+cd web
+npx convex dev                         # local or dev deployment; regenerates convex/_generated
+npx convex env set GARMS_DEV_USER will # dev only
+npx vitest run                         # backend tests (convex-test, in memory)
+bun seed/seed-canvas.ts "dev|will"     # optional: fill that account with the sample Products
+```
+
+The iOS Debug build reads `CONVEX_URL` from `ios/Configuration/Debug-Info.plist`
+(`http://127.0.0.1:3210` for a local deployment in the simulator) or the scheme environment.
+A new User starts with an empty Canvas holding only **Recent uploads**. Edits save when each
+gesture ends; offline, the last loaded Canvas stays viewable and editing is disabled.
+
 ## Documentation
 
 - [Product specification](docs/PRODUCT_SPEC.md)
@@ -55,46 +76,15 @@ Server-only credentials belong in `web/.env.local` locally and the hosting provi
 - [Historical canvas implementation plan](docs/CANVAS_IMPLEMENTATION_PLAN.md)
 - [Live-link proposal](docs/LIVE_LINK_PLAN.md) — initial proposal; subsequent discussion favors evaluating Jev as the primary classifier in a Next.js backend.
 
-## Mock followed canvases
-
-Tap the people icon at the top right beside the inbox to open the **Find people** drawer. It
-shows `genevieve_123` and `daisy`; use **Search users** to
-filter by name or username, then tap a user to view their canvas. The separate
-canvas search icon searches items and groups across all open canvases while keeping
-your current view. Tap **Follow** beside the canvas title
-to follow that user. The button changes to a **tick**; tap it to unfollow and
-remove the copy. Your local username is `@you`.
-
-Genevieve has 480 products (thirty copies of her original 16). Daisy has 320 products
-(twenty copies of the original 16). Most groups on both canvases are uncoloured, with a
-repeatable random mix of soft colours on the remainder. All use the bundled fixture images in named
-collections. Viewing adds a separate preview beside your canvas, with an owner label
-and no border. Your canvas is labelled **Your canvas · @you** only while other
-canvases are shown. Canvas labels track the animated bounds during dragging.
-Canvases are initially separated by 5,000 world points, and zoom extends down to 2%. The copy retains its collection names, colours, memberships,
-and relative positions. Long-press the canvas label, a product, or a collection
-and drag to move that whole canvas; it cannot magnetically merge with your collections.
-Product details and collection edits affect only the local copy. Following and
-unfollowing support undo/redo, and following the same user twice opens the existing
-copy. This prototype is session-only: there are no accounts, persistence, or live
-updates from other users.
-
-Run the focused checks with:
-
-```sh
-zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/FollowCanvasChecks.swift
-```
-
 ## Canvas availability
 
 Product and group drawers include a multiline **Notes** field. Edits save as you
-type within the current canvas session and support undo/redo. Notes are currently
-held in memory with the canvas and are lost when the app is terminated.
+type, support undo/redo, and are stored with the Product or Group in Convex.
 
-When the canvas loads, the app checks each product independently through
-`/api/scrape`, with at most three requests in flight. The server reuses successful
-results for 24 hours. Products marked `out_of_stock`, `sold`, `listing_ended`, or
-`removed` fade to 35% opacity and remain selectable. Unknown results and connection
+When the canvas loads, the app checks each placed product not checked in the last
+24 hours through `/api/scrape`, with at most three requests in flight, and saves the
+result and its time on the Product. Products that are `sold`, `removed` or `out_of_stock`
+fade to 35% opacity and remain selectable. Unknown results and connection
 failures do not mark products unavailable. Search dimming still takes precedence.
 The drawer shows the loaded availability, and manual checks update that product’s canvas
 availability, even when other products share its URL. VoiceOver reads the availability status too.

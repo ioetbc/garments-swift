@@ -46,13 +46,8 @@ nonisolated enum CanvasProximity {
     static func groups(document: CanvasDocument, index: CanvasSpatialIndex, preview: (moving: String, target: String)? = nil, previous: [[String]] = [], detached: Set<CanvasGroupLink> = []) -> [[String]] {
         var priorGroup: [String:Int] = [:]
         for (number, group) in previous.enumerated() { for id in group { priorGroup[id] = number } }
-        // Followed canvases retain their source groups, independent of proximity.
-        let guestIDs = Set(document.placements.values.filter { $0.canvasUsername != nil }.map(\.id))
-        var visited = guestIDs
-        var result = (document.namedGroups ?? []).compactMap { group -> [String]? in
-            let members = group.members.filter { guestIDs.contains($0) }
-            return members.isEmpty ? nil : members
-        }
+        var visited: Set<String> = []
+        var result: [[String]] = []
         for id in document.order where !visited.contains(id) {
             visited.insert(id)
             var members = [id], cursor = 0
@@ -61,7 +56,7 @@ nonisolated enum CanvasProximity {
                 cursor += 1
                 if let preview {
                     let linked = p.id == preview.moving ? preview.target : (p.id == preview.target ? preview.moving : nil)
-                    if let linked, !guestIDs.contains(linked), !detached.contains(CanvasGroupLink(p.id,linked)), document.placements[linked] != nil, visited.insert(linked).inserted {
+                    if let linked, !detached.contains(CanvasGroupLink(p.id,linked)), document.placements[linked] != nil, visited.insert(linked).inserted {
                         members.append(linked)
                     }
                 }

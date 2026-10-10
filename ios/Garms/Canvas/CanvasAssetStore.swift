@@ -11,21 +11,9 @@ nonisolated struct AlphaMask: Sendable {
     }
 }
 nonisolated enum CanvasImageWorker {
-    static func sourceURL(_ asset: String) -> URL? {
-        guard !asset.contains("/"), !asset.contains("..") else { return nil }
-        return Bundle.main.url(forResource:asset,withExtension:"png") ?? Bundle.main.url(forResource:asset,withExtension:"png",subdirectory:"Samples")
-    }
-    static func decode(url: URL, tier: Int) -> CGImage? {
-        guard let src = CGImageSourceCreateWithURL(url as CFURL,nil) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(src,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:tier,kCGImageSourceShouldCacheImmediately:true] as CFDictionary)
-    }
     static func decode(data: Data, tier: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: tier, kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
-    }
-    static func resolve(_ asset: String, data: Data?, tier: Int) -> CGImage? {
-        if let data { return decode(data: data, tier: tier) }
-        return sourceURL(asset).flatMap { decode(url: $0, tier: tier) }
     }
     static func mask(_ image: CGImage) -> AlphaMask? {
         let w = image.width, h = image.height
@@ -39,7 +27,10 @@ nonisolated enum CanvasImageWorker {
     }
 }
 @MainActor final class CanvasAssetStore {
-    var library: ImportedAssetLibrary?
+    var library: ImportedAssetLibrary? {
+        // A file another device uploaded may now have a URL; try again.
+        didSet { library?.urlsChanged = { [weak self] in self?.failed.removeAll(); self?.changed?() } }
+    }
     struct Key: Hashable, Sendable { var asset: String; var tier: Int }
     private struct Entry { var image: CGImage; var stamp: Int; var cost: Int }
     private var cache: [Key:Entry] = [:]
@@ -52,7 +43,6 @@ nonisolated enum CanvasImageWorker {
     private(set) var inFlight = 0
     var needed: Set<Key> = []
     var changed: (() -> Void)?
-    var failure: ((String) -> Void)?
     private var failed: Set<String> = []
     private var pressureUntil = Date.distantPast
     func tier(for pixels: Double) -> Int {
@@ -73,11 +63,13 @@ nonisolated enum CanvasImageWorker {
         while inFlight < 2, !queue.isEmpty {
             let key = queue.removeFirst(); inFlight += 1
             let gen = generation
-            let data = library?.data(for: key.asset)
+            let library = library
             Task { [weak self] in
+                let data = await library?.load(key.asset)
                 let result = await Task.detached(priority:.userInitiated) { () -> (CGImage?, AlphaMask?) in
-                    let image = CanvasImageWorker.resolve(key.asset, data: data, tier: key.tier)
-                    let mask = CanvasImageWorker.resolve(key.asset, data: data, tier: 192).flatMap(CanvasImageWorker.mask)
+                    guard let data else { return (nil, nil) }
+                    let image = CanvasImageWorker.decode(data: data, tier: key.tier)
+                    let mask = CanvasImageWorker.decode(data: data, tier: 192).flatMap(CanvasImageWorker.mask)
                     return (image,mask)
                 }.value
                 guard let self else { return }
@@ -87,7 +79,7 @@ nonisolated enum CanvasImageWorker {
                     self.bytes -= self.cache[key]?.cost ?? 0
                     self.cache[key] = Entry(image:image,stamp:self.stamp,cost:cost); self.bytes += cost
                     if self.masks[key.asset] == nil { self.masks[key.asset] = result.1 }
-                } else if result.0 == nil, self.failed.insert(key.asset).inserted { self.failure?("Missing sample artwork: \(key.asset). Check the bundled Samples folder.") }
+                } else if result.0 == nil { self.failed.insert(key.asset) }
                 self.evict(); self.changed?(); self.pump()
             }
         }
@@ -101,7 +93,7 @@ nonisolated enum CanvasImageWorker {
         generation += 1; pressureUntil = Date().addingTimeInterval(20)
         cache.removeAll(); masks.removeAll(); bytes = 0; needed.removeAll(); queue.removeAll(); requests.removeAll(); changed?()
     }
-    func hit(_ p: StickerPlacement, product: SampleProduct, point: WorldPoint) -> Bool {
+    func hit(_ p: StickerPlacement, product: Product, point: WorldPoint) -> Bool {
         guard p.bounds.contains(point.cg) else { return false }
         return masks[product.asset]?.hit(u:(point.x-p.bounds.minX)/p.width,v:(point.y-p.bounds.minY)/p.height) ?? true
     }

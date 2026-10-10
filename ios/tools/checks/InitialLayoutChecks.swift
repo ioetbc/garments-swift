@@ -36,12 +36,6 @@ import CoreGraphics
                 CanvasFixtures.fit(&repeated,viewport:viewport)
                 precondition(repeated == document, "The initial arrangement must be repeatable")
             }
-            let session = CanvasSession()
-            session.updateViewport(viewport)
-            precondition(session.groups.count > 1 && session.groups.allSatisfy { (3...5).contains($0.count) })
-            let arranged = session.document
-            session.updateViewport(CGSize(width:viewport.height,height:viewport.width))
-            precondition(session.document == arranged, "Viewport changes must not rearrange an existing canvas")
         }
         print("Initial layout checks passed")
     }

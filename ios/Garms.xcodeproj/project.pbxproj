@@ -13,6 +13,7 @@
 		ABCD00000000000000000008 /* SharedImports/SharedImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* SharedImports/SharedImport.swift */; };
 		ABCD00000000000000000009 /* SharedImports/SharedImportInbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000004 /* SharedImports/SharedImportInbox.swift */; };
 		ABCD0000000000000000000A /* GarmsShare.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* GarmsShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ABCD00000000000000000020 /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = ABCD00000000000000000021 /* ConvexMobile */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -60,6 +61,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ABCD00000000000000000020 /* ConvexMobile in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -115,6 +117,7 @@
 			);
 			name = Garms;
 			packageProductDependencies = (
+				ABCD00000000000000000021 /* ConvexMobile */,
 			);
 			productName = Garms;
 			productReference = 440861DA3065690500EF5C4B /* Garms.app */;
@@ -160,6 +163,9 @@
 			);
 			mainGroup = 440861D13065690500EF5C4B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				ABCD00000000000000000022 /* XCRemoteSwiftPackageReference "convex-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 440861DB3065690500EF5C4B /* Products */;
 			projectDirPath = "";
@@ -471,6 +477,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		ABCD00000000000000000022 /* XCRemoteSwiftPackageReference "convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/get-convex/convex-swift";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.8.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		ABCD00000000000000000021 /* ConvexMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = ABCD00000000000000000022 /* XCRemoteSwiftPackageReference "convex-swift" */;
+			productName = ConvexMobile;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 440861D23065690500EF5C4B /* Project object */;
 }

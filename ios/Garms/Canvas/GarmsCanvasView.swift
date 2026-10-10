@@ -86,7 +86,6 @@ import UIKit
         session.render = { [weak self] in self?.render() }
         session.resolveInteraction = { [weak self] in self?.cancelInteraction() }
         renderer.assets.changed = { [weak self] in self?.render() }
-        renderer.assets.failure = { [weak session] in session?.error = $0 }
         configureGestures()
         notificationTokens.append(NotificationCenter.default.addObserver(forName:UIApplication.didEnterBackgroundNotification,object:nil,queue:.main) { [weak self] _ in
             MainActor.assumeIsolated { self?.cancelInteraction() }
@@ -149,15 +148,11 @@ import UIKit
         let world = session.camera.world(point,viewport:bounds.size)
         let ids = session.index.query(CGRect(x:world.x-0.5,y:world.y-0.5,width:1,height:1))
         return session.document.order.reversed().first { id in
-            guard ids.contains(id), let p = session.document.placements[id], session.isVisible(p), let product = session.document.products[p.productID] else { return false }
+            guard ids.contains(id), let p = session.document.placements[id], let product = session.document.products[p.productID] else { return false }
             return renderer.assets.hit(p,product:product,point:world)
         }
     }
     private func dragGroup(at point:CGPoint) -> [String]? {
-        guard overlay.canvasFollowButton(at: point) == nil else { return nil }
-        if let user = overlay.canvasLabel(at: point) {
-            return session.document.canvasMembers(user.username)
-        }
         // Use the same alpha-aware image hit test as individual garment pickup.
         if let title = overlay.title(at: point) { return title.group.members }
         return overlay.group(at:point,includingInterior:hit(point) == nil)
@@ -165,10 +160,7 @@ import UIKit
     @objc private func tapped(_ r:UITapGestureRecognizer) {
         guard !manipulated, !waitForLift else { return }
         let point = r.location(in: self)
-        if let user = overlay.canvasFollowButton(at: point) {
-            if session.isFollowing(user) { session.unfollow(user) }
-            else { session.follow(user) }
-        } else if let title = overlay.title(at: point) {
+        if let title = overlay.title(at: point) {
             session.inspectGroup(title.group.id)
         } else {
             session.select(hit(point), showDetails:true)
@@ -354,19 +346,14 @@ import UIKit
         for id in ids {
             guard let p = session.document.placements[id], let product = session.document.products[p.productID] else { continue }
             let element = elements[id] ?? UIAccessibilityElement(accessibilityContainer:self)
-            let owner = p.canvasUsername.flatMap { username in session.visibleCanvases.first { $0.username == username } }
-            element.accessibilityLabel = product.title + ", " + product.category + (owner.map { ", " + $0.title } ?? "")
-            element.accessibilityHint = owner == nil ? nil : "Moving this item moves the entire copied canvas"
-            element.accessibilityValue = session.classification(for: product)?.label
+            element.accessibilityLabel = [product.title, product.category].compactMap { $0 }.joined(separator: ", ")
+            element.accessibilityValue = product.availability?.label
             element.accessibilityTraits = .button
             element.accessibilityFrameInContainerSpace = overlay.screenRect(p.bounds,session)
             func action(_ title:String,_ body:@escaping (CanvasSession)->Void) -> UIAccessibilityCustomAction {
                 UIAccessibilityCustomAction(name:title) { [weak self] _ in guard let self else { return false }; self.cancelInteraction(); self.session.select(id); body(self.session); return true }
             }
-            element.accessibilityCustomActions = [action("Select") { $0.select(id,showDetails:true) }, action("Move right") { $0.nudge(x:20,y:0) },action("Move left") { $0.nudge(x:-20,y:0) },action("Move up") { $0.nudge(x:0,y:-20) },action("Move down") { $0.nudge(x:0,y:20) }]
-            if owner == nil {
-                element.accessibilityCustomActions? += [action("Enlarge") { $0.resize(1.1) }, action("Shrink") { $0.resize(1/1.1) }]
-            }
+            element.accessibilityCustomActions = [action("Select") { $0.select(id,showDetails:true) }, action("Move right") { $0.nudge(x:20,y:0) },action("Move left") { $0.nudge(x:-20,y:0) },action("Move up") { $0.nudge(x:0,y:-20) },action("Move down") { $0.nudge(x:0,y:20) },action("Enlarge") { $0.resize(1.1) }, action("Shrink") { $0.resize(1/1.1) }]
             elements[id] = element
         }
         let groupElements = overlay.titles.map { title in
@@ -378,21 +365,7 @@ import UIKit
             element.activate = { [weak self] in self?.session.inspectGroup(title.group.id) }
             return element
         }
-        let followElements = overlay.canvasHeaders.filter { !$0.isOwn && $0.button.intersects(bounds) }.map { header in
-            let element = CanvasGroupAccessibilityElement(accessibilityContainer: self)
-            let following = session.isFollowing(header.user)
-            element.accessibilityLabel = "\(following ? "Unfollow" : "Follow") @\(header.user.username)"
-            element.accessibilityHint = following ? "Following. Double-tap to unfollow." : header.user.title
-            element.accessibilityTraits = .button
-            element.accessibilityFrameInContainerSpace = header.button
-            element.activate = { [weak self] in
-                guard let self else { return }
-                if self.session.isFollowing(header.user) { self.session.unfollow(header.user) }
-                else { self.session.follow(header.user) }
-            }
-            return element
-        }
-        accessibilityElements = followElements + groupElements + ids.compactMap { elements[$0] }
+        accessibilityElements = groupElements + ids.compactMap { elements[$0] }
     }
     func shutdown() {
         ink.setDrawingEnabled(false)

@@ -20,7 +20,7 @@ import Foundation
         precondition(errorResult.label == "Couldn’t check")
         precondition(!errorResult.isUnavailable)
         precondition(GarmsAPI.ProductClassification(status: "unknown", error: nil).label == "Unknown")
-        let session = CanvasSession()
+        let (session, sync) = CanvasFixtures.session()
         let requests = Requests()
         await session.loadAvailability { try await requests.fetch($0) }
         let productIDs = Set(session.document.placements.values.map(\.productID))
@@ -34,27 +34,44 @@ import Foundation
         let sharedURLProduct = session.document.products.values.first {
             $0.id != product.id && $0.product_url == product.product_url
         }!
-        session.updateAvailability(.init(status: "available", error: nil), productID: product.id)
-        precondition(session.classification(for: sharedURLProduct)?.status == "sold")
-        precondition(session.classification(for: product)?.status == "available")
-        for status in ["sold"] {
-            session.updateAvailability(.init(status: status, error: nil), productID: product.id)
+        session.recordAvailability(.init(status: "available", error: nil), productID: product.id)
+        precondition(session.document.products[sharedURLProduct.id]?.availability?.state == .sold)
+        precondition(session.document.products[product.id]?.availability?.state == .available)
+        // Results are saved on the Product, outside undo.
+        precondition(sync.applied.last?.products.map(\.id) == [product.id] && !session.history.canUndo)
+        for status in ["sold", "out_of_stock", "removed"] {
+            session.recordAvailability(.init(status: status, error: nil), productID: product.id)
             precondition(session.opacity(for: placement) == 0.35)
         }
-        for status in ["available", "unknown", "unexpected", "out_of_stock", "listing_ended", "removed"] {
-            session.updateAvailability(.init(status: status, error: nil), productID: product.id)
+        for status in ["available", "unknown", "unexpected", "listing_ended"] {
+            session.recordAvailability(.init(status: status, error: nil), productID: product.id)
             precondition(session.opacity(for: placement) == 1)
         }
-        session.updateAvailability(.init(status: "sold", error: nil), productID: product.id)
+        // A result never undoes, or is undone by, the User's own edits.
+        session.updateProductPrice(product.id, price: Price(amount: 100, currency: "EUR"))
+        session.recordAvailability(.init(status: "available", error: nil), productID: product.id)
+        session.undo()
+        precondition(session.document.products[product.id]?.price == product.price)
+        precondition(session.document.products[product.id]?.availability?.state == .available)
+        // A failed check keeps the last known Availability.
+        session.recordAvailability(.init(status: "sold", error: nil), productID: product.id)
+        session.recordAvailability(.init(status: "available", error: "Timed out"), productID: product.id)
+        precondition(session.document.products[product.id]?.availability?.state == .sold)
         session.searchQuery = "no matching products"
         precondition(session.opacity(for: placement) == 0.1)
         session.searchQuery = ""
         precondition(session.opacity(for: placement) == 0.35)
-        let failed = CanvasSession()
+        // Products checked within the last day are not scraped again on launch.
+        let again = Requests()
+        await session.loadAvailability { try await again.fetch($0) }
+        precondition(again.urls.isEmpty)
+        await session.loadAvailability(now: Date().addingTimeInterval(25 * 60 * 60)) { try await again.fetch($0) }
+        precondition(again.urls.count == expected.count)
+        let failed = CanvasFixtures.session().0
         await failed.loadAvailability { _ in throw URLError(.notConnectedToInternet) }
-        precondition(failed.availability.isEmpty)
+        precondition(failed.document.products.values.allSatisfy { $0.availability == nil })
         precondition(failed.document.placements.values.allSatisfy { failed.opacity(for: $0) == 1 })
-        let cancelled = CanvasSession()
+        let cancelled = CanvasFixtures.session().0
         let task = Task {
             await cancelled.loadAvailability { _ in
                 try await Task.sleep(for: .seconds(10))
@@ -63,7 +80,7 @@ import Foundation
         }
         task.cancel()
         await task.value
-        precondition(cancelled.availability.isEmpty)
+        precondition(cancelled.document.products.values.allSatisfy { $0.availability == nil })
         print("Availability checks passed: independent product requests and statuses, concurrency limit, fading, search, recovery, failures and cancellation")
     }
 }

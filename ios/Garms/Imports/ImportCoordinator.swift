@@ -117,6 +117,10 @@ import OSLog
             session.revealImport(placement.id)
             return
         }
+        if let product = session.document.products.values.first(where: { (try? SharedLink.normalized($0.product_url)) == key }) {
+            session.placeSticker(of: product.id)
+            return
+        }
         if items.contains(where: { (try? SharedLink.normalized($0.record.url)) == key && $0.placementID == nil }) { return }
         enqueue(Item(id: record.id, record: record))
     }

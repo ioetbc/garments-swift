@@ -1,12 +1,17 @@
 import SwiftUI
 
 struct CanvasImageDetails: View {
-    let product: SampleProduct
+    let product: Product
     let library: ImportedAssetLibrary
     @Binding var status: String
+    @Binding var title: String
+    @Binding var category: String
+    @Binding var price: Price?
     @Binding var notes: String
-    let onDelete: () -> Void
-    let availability: GarmsAPI.ProductClassification?
+    let onRemoveSticker: () -> Void
+    let onDeleteProduct: () -> Void
+    let onBringToFront: () -> Void
+    let onPlaceAnother: () -> Void
     let onAvailability: (GarmsAPI.ProductClassification) -> Void
     @State private var showingDeleteConfirmation = false
     @State private var scrapingPage = false
@@ -17,34 +22,17 @@ struct CanvasImageDetails: View {
     @State private var connectionMessage: String?
     @State private var connectionFailed = false
 
-    // Placeholder details derived from the bundled sample names.
-    private var colour: String {
-        let colours = ["Blue", "Beige", "Taupe", "White", "Black", "Green", "Red", "Burgundy", "Pink", "Khaki", "Gray"]
-        return colours.first { product.title.components(separatedBy: " ").contains($0) } ?? "Black"
-    }
-
-    private var brand: String {
-        product.title.components(separatedBy: " \(colour) ").first ?? "Lemaire"
-    }
-
     var body: some View {
         NavigationStack {
             GeometryReader { geometry in
                 Form {
                     Section {
                         TabView {
-                            if product.isImported == true {
-                                ForEach(Array(product.detailAssets.enumerated()), id: \.element) { index, asset in
-                                    let isCutout = asset == product.asset && product.originalAsset != nil && product.originalAsset != product.asset
-                                    CanvasDetailsImagePage(asset: asset, library: library,
-                                        label: isCutout ? "Cutout" : "Original",
-                                        accessibility: "\(product.title), \(isCutout ? "Cutout" : "Original"), image \(index + 1) of \(product.detailAssets.count)")
-                                }
-                            } else {
-                                ForEach(0..<5, id: \.self) { index in
-                                    CanvasDetailsImagePage(asset: product.asset, library: library, label: nil,
-                                        accessibility: "\(product.title), image \(index + 1) of 5")
-                                }
+                            ForEach(Array(product.detailAssets.enumerated()), id: \.element) { index, asset in
+                                let label = asset == product.asset ? (product.originalAsset == nil || product.originalAsset == asset ? nil : "Cutout")
+                                    : asset == product.originalAsset ? "Original" : "Photo"
+                                CanvasDetailsImagePage(asset: asset, library: library, label: label,
+                                    accessibility: "\(product.title), \(label ?? "image") \(index + 1) of \(product.detailAssets.count)")
                             }
                         }
                         .tabViewStyle(.page(indexDisplayMode: .always))
@@ -55,8 +43,12 @@ struct CanvasImageDetails: View {
                         .listRowBackground(Color.clear)
                     }
                     Section {
-                        LabeledContent("Name", value: product.title)
-                        LabeledContent("Price", value: product.price?.formatted(.currency(code: "GBP")) ?? "Not available")
+                        TextField("Name", text: $title)
+                            .accessibilityLabel("Product name")
+                        TextField("Category, e.g. Coat", text: $category)
+                            .textInputAutocapitalization(.words)
+                            .accessibilityLabel("Category")
+                        CanvasPriceField(price: $price)
                         if !product.product_url.isEmpty {
                             LabeledContent("URL") {
                                 if let url = URL(string: product.product_url) {
@@ -77,10 +69,6 @@ struct CanvasImageDetails: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        if product.isImported != true {
-                            LabeledContent("Colour", value: colour)
-                            LabeledContent("Brand", value: brand)
-                        }
                     }
                     Section("Notes") {
                         TextField("Add notes…", text: $notes, axis: .vertical)
@@ -106,17 +94,20 @@ struct CanvasImageDetails: View {
                                     .font(.footnote)
                                     .foregroundStyle(.red)
                             }
-                            if let classification = scrapedPage?.classification ?? availability {
-                                LabeledContent("Availability", value: classification.label)
+                            if let availability = product.availability {
+                                LabeledContent("Availability", value: availability.label)
                                     .accessibilityIdentifier("productAvailability")
+                                Text("Checked \(Date(timeIntervalSince1970: availability.checkedAt / 1000).formatted(.relative(presentation: .named)))")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if let classification = scrapedPage?.classification {
                                 if let message = classification.error {
                                     Text(message)
                                         .font(.footnote)
                                         .foregroundStyle(.orange)
                                         .textSelection(.enabled)
                                 }
-                            } else if scrapedPage != nil {
-                                LabeledContent("Availability", value: "Unknown")
                             }
                             if let scrapedPage {
                                 Button("View Markdown") { showingMarkdown = true }
@@ -150,6 +141,12 @@ struct CanvasImageDetails: View {
                         }
                     }
                     Section {
+                        Button("Place another sticker", systemImage: "plus.square.on.square", action: onPlaceAnother)
+                        Button("Bring to front", systemImage: "square.3.layers.3d.top.filled", action: onBringToFront)
+                        Button("Remove from canvas", systemImage: "rectangle.portrait.slash", action: onRemoveSticker)
+                            .accessibilityHint("Keeps the product so you can find it in search")
+                    }
+                    Section {
                         Button(role: .destructive) {
                             showingDeleteConfirmation = true
                         } label: {
@@ -165,9 +162,9 @@ struct CanvasImageDetails: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .alert("Delete product?", isPresented: $showingDeleteConfirmation) {
                     Button("Cancel", role: .cancel) { }
-                    Button("Delete", role: .destructive) { onDelete() }
+                    Button("Delete", role: .destructive) { onDeleteProduct() }
                 } message: {
-                    Text("Are you sure you want to delete this product from the canvas?")
+                    Text("This deletes the product, every sticker of it and its photos. It can't be undone.")
                 }
             }
         }
@@ -249,12 +246,45 @@ private struct CanvasDetailsImagePage: View {
         .accessibilityLabel(accessibility)
         .task(id: asset) {
             productImage = nil
-            let data = library.data(for: asset)
+            guard let data = await library.load(asset) else { return }
             let image = await Task.detached(priority: .userInitiated) {
-                CanvasImageWorker.resolve(asset, data: data, tier: 1024)
+                CanvasImageWorker.decode(data: data, tier: 1024)
             }.value
             guard !Task.isCancelled else { return }
             productImage = image
         }
+    }
+}
+
+/// An optional Price: an amount in a chosen currency, or none.
+private struct CanvasPriceField: View {
+    @Binding var price: Price?
+    @State private var amount: Decimal?
+    @State private var currency: String
+    private static let currencies = ["GBP", "EUR", "USD", "JPY", "AUD", "CAD", "CHF", "SEK", "DKK"]
+
+    init(price: Binding<Price?>) {
+        _price = price
+        _amount = State(initialValue: price.wrappedValue?.major)
+        _currency = State(initialValue: price.wrappedValue?.currency ?? Locale.current.currency?.identifier ?? "GBP")
+    }
+
+    var body: some View {
+        HStack {
+            TextField("No price", value: $amount, format: .number.precision(.fractionLength(0...2)))
+                .keyboardType(.decimalPad)
+                .accessibilityLabel("Price")
+            Picker("Currency", selection: $currency) {
+                ForEach(Set(Self.currencies + [currency]).sorted(), id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+        }
+        .onChange(of: amount) { save() }
+        .onChange(of: currency) { save() }
+    }
+
+    private func save() {
+        price = amount.flatMap { $0 >= 0 ? Price(major: $0, currency: currency) : nil }
     }
 }

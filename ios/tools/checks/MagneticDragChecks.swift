@@ -5,20 +5,19 @@ import CoreGraphics
 // CanvasSession and CanvasInteractionController; run the resulting executable.
 @main struct MagneticDragChecks {
     @MainActor static func main() {
-        let session = CanvasSession()
+        let session = CanvasFixtures.session().0
         let product = CanvasFixtures.products[0]
-        let moving = StickerPlacement(id:"moving",productID:product.id,center:.init(),width:100,height:100)
-        let target = StickerPlacement(id:"target",productID:product.id,center:.init(x:300),width:100,height:100)
-        let document = CanvasDocument(namedGroups:[],products:[product.id:product],placements:[moving.id:moving,target.id:target],order:[moving.id,target.id])
+        let moving = StickerPlacement(id:"moving",productID:product.id,center:.init(),width:100,height:100,z:"0")
+        let target = StickerPlacement(id:"target",productID:product.id,center:.init(x:300),width:100,height:100,z:"0")
+        let document = CanvasDocument(namedGroups:[],products:[product.id:product],placements:[moving.id:moving,target.id:target])
         // Nearby stationary items must not group on load, during another drag, or on drop.
-        let isolated = CanvasSession()
+        let isolated = CanvasFixtures.session().0
         var clustered = document
-        let bystander = StickerPlacement(id:"bystander",productID:product.id,center:.init(x:420),width:100,height:100)
-        let remoteA = StickerPlacement(id:"remote-a",productID:product.id,center:.init(x:2000),width:100,height:100)
-        let remoteB = StickerPlacement(id:"remote-b",productID:product.id,center:.init(x:2120),width:100,height:100)
+        let bystander = StickerPlacement(id:"bystander",productID:product.id,center:.init(x:420),width:100,height:100,z:"0")
+        let remoteA = StickerPlacement(id:"remote-a",productID:product.id,center:.init(x:2000),width:100,height:100,z:"0")
+        let remoteB = StickerPlacement(id:"remote-b",productID:product.id,center:.init(x:2120),width:100,height:100,z:"0")
         for item in [bystander,remoteA,remoteB] {
             clustered.placements[item.id] = item
-            clustered.order.append(item.id)
         }
         isolated.document = clustered
         isolated.refresh()
@@ -36,7 +35,7 @@ import CoreGraphics
         precondition(isolated.groups.count == 1 && Set(isolated.groups[0]) == Set([moving.id,target.id]), "Dropping and refreshing must retain only the intentional group")
 
         // Sweep across two adjacent items at minimum zoom, then leave both behind.
-        let sweep = CanvasSession()
+        let sweep = CanvasFixtures.session().0
         sweep.camera.zoom = CanvasConfiguration.zoom.lowerBound
         sweep.document = clustered
         sweep.refresh()
@@ -49,7 +48,7 @@ import CoreGraphics
         sweepDrag.finish()
         precondition(sweep.groups.allSatisfy { $0.contains(moving.id) && $0.count == 2 }, "Dropping after a sweep must not commit passed-over neighbours")
 
-        let dense = CanvasSession()
+        let dense = CanvasFixtures.session().0
         dense.camera.zoom = CanvasConfiguration.zoom.lowerBound
         dense.document = CanvasFixtures.make(count:50)
         dense.refresh()
@@ -125,11 +124,11 @@ import CoreGraphics
             precondition(CanvasGeometry.magneticOffset(a,toward:a,zoom:zoom) == WorldPoint(), "Overlap must allow free movement")
         }
         for zoom in [0.1,1.0,8.0] {
-            let s = CanvasSession()
+            let s = CanvasFixtures.session().0
             s.camera.zoom = zoom
             var neighbour = target
             neighbour.center.x = 120
-            let d = CanvasDocument(products:[product.id:product],placements:[moving.id:moving,target.id:neighbour],order:[moving.id,target.id])
+            let d = CanvasDocument(products:[product.id:product],placements:[moving.id:moving,target.id:neighbour])
             s.document = d; s.committedGroups = [[moving.id,target.id]]; s.refresh()
             let drag = CanvasInteractionController(session:s)
             drag.liftImage(moving.id,point:.zero,timestamp:0)

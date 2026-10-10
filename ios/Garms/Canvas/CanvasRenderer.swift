@@ -21,9 +21,7 @@ import UIKit
         guard size.width > 0, size.height > 0 else { return }
         let a = camera.world(CGPoint(x:-200,y:-200),viewport:size)
         let b = camera.world(CGPoint(x:size.width+200,y:size.height+200),viewport:size)
-        let visible = session.index.query(CGRect(x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y)).union(retained).filter { id in
-            session.document.placements[id].map { session.isVisible($0) } ?? false
-        }
+        let visible = session.index.query(CGRect(x:a.x,y:a.y,width:b.x-a.x,height:b.y-a.y)).union(retained).filter { session.document.placements[$0] != nil }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         updatePaper(camera:camera,size:size,displayScale:displayScale)
         if hypot(camera.center.x-origin.x,camera.center.y-origin.y) > 4096 { origin = camera.center }
@@ -114,7 +112,7 @@ import UIKit
     }
 
     private func updateGroupBackgrounds(session: CanvasSession, liftedIDs: Set<String>) {
-        let groups = (session.document.namedGroups ?? []).filter { $0.backgroundColour != nil && session.isVisible($0) }
+        let groups = (session.document.namedGroups ?? []).filter { $0.backgroundColour != nil }
         let ids = Set(groups.map(\.id))
         for id in Array(groupBackgrounds.keys) where !ids.contains(id) {
             groupBackgrounds.removeValue(forKey: id)?.removeFromSuperlayer()

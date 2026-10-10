@@ -1,16 +1,43 @@
 import UIKit
 import ImageIO
 
+/// Product images by file key: uploaded once, cached on disk, downloaded when another device added them.
 @MainActor final class ImportedAssetLibrary {
-    private var sources: [String: Data] = [:]
-    func data(for key: String) -> Data? { sources[key] }
+    private let sync: CanvasSync
+    private let directory = URL.cachesDirectory.appending(path: "GarmsFiles", directoryHint: .isDirectory)
+    /// Download URLs for files this device has not cached, from the latest snapshot.
+    var urls: [String: URL] = [:] { didSet { if urls != oldValue { urlsChanged?() } } }
+    var urlsChanged: (() -> Void)?
+    var failure: ((String) -> Void)?
+
+    init(sync: CanvasSync) {
+        self.sync = sync
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    private func file(_ key: String) -> URL? {
+        guard !key.isEmpty, !key.contains("/"), !key.contains("..") else { return nil }
+        return directory.appending(path: key)
+    }
+    /// Cached bytes, without touching the network.
+    func data(for key: String) -> Data? { file(key).flatMap { try? Data(contentsOf: $0) } }
+    /// Cached bytes, or downloaded and cached.
+    func load(_ key: String) async -> Data? {
+        if let data = data(for: key) { return data }
+        guard let url = urls[key], let destination = file(key),
+              let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        try? data.write(to: destination, options: .atomic)
+        return data
+    }
+    /// Caches new image bytes under a fresh key and uploads them; Products can reference the key immediately.
     func insert(_ data: Data) -> String {
         let key = "import-" + UUID().uuidString
-        sources[key] = data
+        if let destination = file(key) { try? data.write(to: destination, options: .atomic) }
+        sync.upload(data, key: key) { [weak self] error in
+            if let error { self?.failure?("An image couldn't be saved to your account, so other devices won't show it. \(error.localizedDescription)") }
+        }
         return key
     }
-    func retain(_ keys: Set<String>) { sources = sources.filter { keys.contains($0.key) } }
-
 }
 
 nonisolated final class HTTPSImageRedirects: NSObject, URLSessionTaskDelegate, Sendable {

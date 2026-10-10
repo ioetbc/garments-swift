@@ -47,8 +47,7 @@ import Vision
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let inbox = SharedImportInbox(directoryOverride: directory)
-        let session = CanvasSession()
-        session.updateViewport(CGSize(width: 390, height: 844))
+        let session = CanvasFixtures.session(laidOut: true).0
         let baseline = session.document.order.count
         let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
         let png = UIGraphicsImageRenderer(size: CGSize(width: 100, height: 100), format: format).image { context in
@@ -123,10 +122,10 @@ import Vision
         let otherProduct = session.document.placements[other]!.productID
         session.document.products[otherProduct]?.originalAsset = original
         session.deletePlacement(id); coordinator.deleted(id)
-        precondition(session.importedAssets.data(for: product.asset) == nil && session.importedAssets.data(for: original) != nil)
+        // Removing Stickers keeps the Products, so their files stay cached.
         session.deletePlacement(other)
-        precondition(session.importedAssets.data(for: original) == nil)
-        // Both deletion entry points discard late results without resurrecting assets.
+        precondition(session.importedAssets.data(for: product.asset) != nil && session.importedAssets.data(for: original) != nil)
+        // Both deletion entry points discard late results without resurrecting the Sticker.
         for dismiss in [false, true] {
             let record = SharedImport(url: "https://shop.example/delete-\(dismiss)")
             try inbox.enqueue(record); coordinator.setActive(true)
@@ -139,7 +138,7 @@ import Vision
             gate.finish(cutout)
             await Task.yield()
             precondition(session.document.placements[placementID] == nil)
-            precondition(session.importedAssets.data(for: oldProduct.asset) == nil)
+            precondition(session.document.products[oldProduct.id]?.asset == oldProduct.asset)
         }
         coordinator.setActive(false)
         // Empty and thrown extraction outcomes are successful original imports.
@@ -172,13 +171,9 @@ import Vision
             precondition(retriedProduct.asset != retriedProduct.originalAsset)
             fallback.setActive(false)
         }
-        let fixture = session.document.products.values.first { $0.isImported != true }!
-        let encoded = try JSONEncoder().encode(fixture)
-        let legacy = try JSONDecoder().decode(SampleProduct.self, from: encoded)
-        precondition(legacy.originalAsset == nil)
-        // Standalone check executables have no sample bundle; resolve fixture PNG directly.
-        let sampleURL = URL(fileURLWithPath: "ios/Garms/Samples/\(fixture.asset).png")
-        precondition(CanvasImageWorker.decode(url: sampleURL, tier: 192) != nil)
+        let fixture = CanvasFixtures.products[0]
+        let decodedFixture = try JSONDecoder().decode(Product.self, from: JSONEncoder().encode(fixture))
+        precondition(decodedFixture == fixture && decodedFixture.originalAsset == nil)
         try session.document.validate()
         print("Foreground cutout checks passed")
     }

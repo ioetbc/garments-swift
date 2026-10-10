@@ -3,7 +3,7 @@ import UIKit
 
 @main struct HistoryChecks {
     @MainActor static func main() {
-        let session = CanvasSession()
+        let session = CanvasFixtures.session().0
         let id = session.document.order[0]
         session.select(id)
         let original = session.document
@@ -51,7 +51,7 @@ import UIKit
         session.undo()
         precondition(session.inkDrawing.strokes.isEmpty)
 
-        let gestureSession = CanvasSession()
+        let gestureSession = CanvasFixtures.session().0
         let interaction = CanvasInteractionController(session: gestureSession)
         let target = gestureSession.document.order[0]
         let start = gestureSession.document.placements[target]!.center.cg
@@ -68,8 +68,7 @@ import UIKit
         precondition(gestureSession.snapshot() == initial)
         gestureSession.redo()
         precondition(gestureSession.snapshot() == finished)
-        let imported = CanvasSession()
-        imported.updateViewport(CGSize(width: 390, height: 844))
+        let imported = CanvasFixtures.session(laidOut: true).0
         let importedID = imported.insertImport(SharedImport(url: "https://shop.example/item"),
             artwork: .init(data: Data([1]), aspect: 1))!
         imported.updateImport(importedID, title: "Enriched", artwork: .init(data: Data([2]), aspect: 0.5))
@@ -84,10 +83,10 @@ import UIKit
         imported.undo()
         imported.select(imported.document.order[0])
         imported.nudge(x: 5, y: 0)
-        precondition(!imported.history.canRedo && imported.importedAssets.data(for: enriched.asset) == nil)
+        // The Product's files stay cached: undo history no longer decides what is kept.
+        precondition(!imported.history.canRedo && imported.importedAssets.data(for: enriched.asset) == Data([2]))
 
-        let groupSession = CanvasSession()
-        groupSession.updateViewport(CGSize(width: 390, height: 844))
+        let groupSession = CanvasFixtures.session(laidOut: true).0
         let group = groupSession.document.namedGroups!.first!
         groupSession.updateGroup(group.id, name: "New", backgroundColour: nil)
         groupSession.updateGroup(group.id, name: "New title", backgroundColour: .init(red: 1, green: 0, blue: 0))
@@ -97,12 +96,12 @@ import UIKit
         groupSession.redo()
         precondition(groupSession.document.namedGroups!.first { $0.id == group.id }!.name == "New title")
 
-        let noOp = CanvasSession()
+        let noOp = CanvasFixtures.session().0
         noOp.select(noOp.document.order[0])
         noOp.nudge(x: 0, y: 0)
         precondition(!noOp.history.canUndo)
         let valid = noOp.document
-        noOp.document.order.append("invalid")
+        noOp.document.placements[noOp.document.order[0]]!.width = .nan
         noOp.complete(valid)
         precondition(noOp.document == valid && !noOp.history.canUndo)
 

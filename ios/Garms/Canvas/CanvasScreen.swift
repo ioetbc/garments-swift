@@ -3,15 +3,13 @@ import UIKit
 import PhotosUI
 
 struct CanvasScreen: View {
-    @State private var session = CanvasSession()
+    @State private var session = CanvasSession(sync: ConvexCanvasSync.configured())
     @State private var statuses: [String: String] = [:]
     @State private var showingImports = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var sendingLogs: Set<UUID> = []
     @State private var logDelivery: [UUID: String] = [:]
     @State private var searchExpanded = false
-    @State private var showingPeople = false
-    @State private var peopleQuery = ""
     @State private var groupPlacement: StickerPlacement?
     @Environment(\.scenePhase) private var phase
     var body: some View {
@@ -22,6 +20,18 @@ struct CanvasScreen: View {
                     get: { session.searchQuery },
                     set: { session.searchQuery = $0 }
                 ), isPresented: $searchExpanded, prompt: "Search canvases")
+                .searchSuggestions {
+                    // Products with no Sticker are only reachable here; choosing one places it again.
+                    ForEach(unplacedMatches) { product in
+                        Button {
+                            searchExpanded = false
+                            session.placeSticker(of: product.id)
+                        } label: {
+                            Label(product.title, systemImage: "plus.circle")
+                        }
+                        .accessibilityHint("Places this product on the canvas")
+                    }
+                }
                 .searchToolbarBehavior(.minimize)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -54,19 +64,6 @@ struct CanvasScreen: View {
                         .accessibilityHint("Shows or hides pens, eraser and colours")
                     }
                     DefaultToolbarItem(kind: .search, placement: .bottomBar)
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            searchExpanded = false
-                            session.searchQuery = ""
-                            session.isDrawing = false
-                            session.resolveInteraction?()
-                            peopleQuery = ""
-                            showingPeople = true
-                        } label: {
-                            Label("Find people", systemImage: "figure.2.arms.open")
-                        }
-                        .accessibilityHint("Opens user search and other people’s canvases")
-                    }
                 }
                 .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
                 .onChange(of: searchExpanded) { _, expanded in
@@ -78,6 +75,16 @@ struct CanvasScreen: View {
                     }
                 }
         }
+            .overlay(alignment: .top) {
+                if session.hasLoaded && !session.isOnline {
+                    Label("Offline — viewing only", systemImage: "wifi.slash")
+                        .font(.footnote.weight(.medium))
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(.thinMaterial, in: Capsule())
+                        .padding(.top, 4)
+                        .accessibilityAddTraits(.isStaticText)
+                }
+            }
             .overlay {
                 if session.imports.progress != nil {
                     ImportViewportProgress()
@@ -123,11 +130,6 @@ struct CanvasScreen: View {
                 }
                 .presentationDetents([.height(410), .large])
                 .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $showingPeople) {
-                peopleDrawer
-                    .presentationDetents([.medium, .large])
-                    .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showingImports) {
                 NavigationStack {
@@ -202,74 +204,18 @@ struct CanvasScreen: View {
                 session.imports.setActive(v == .active)
             }
             .task { session.imports.setActive(phase == .active) }
-            .task { await session.loadAvailability() }
+            .task(id: session.hasLoaded && session.isOnline) {
+                if session.hasLoaded && session.isOnline { await session.loadAvailability() }
+            }
     }
 
-    private var peopleDrawer: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search users", text: $peopleQuery)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityLabel("Search users")
-                    if !peopleQuery.isEmpty {
-                        Button("Clear search", systemImage: "xmark.circle.fill") {
-                            peopleQuery = ""
-                        }
-                        .labelStyle(.iconOnly)
-                        .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(12)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
-                .padding(.horizontal)
-                .padding(.top, 12)
-
-                let users = CanvasFixtures.matchingUsers(peopleQuery)
-                List {
-                    if users.isEmpty {
-                        Text("No users found.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(users) { user in
-                        Button {
-                            session.previewCanvas(user)
-                            showingPeople = false
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: "person.crop.circle.fill")
-                                    .font(.largeTitle)
-                                    .foregroundStyle(.indigo)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(user.displayName).font(.subheadline.bold())
-                                    Text(user.username).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .foregroundStyle(.primary)
-                            .contentShape(Rectangle())
-                        }
-                        .disabled(!session.hasInitialLayout)
-                        .accessibilityLabel("View \(user.username)’s canvas")
-                    }
-                }
-                .listStyle(.plain)
-                .scrollDismissesKeyboard(.interactively)
-            }
-            .navigationTitle("Find people")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { showingPeople = false }
-                }
-            }
-        }
+    private var unplacedMatches: [Product] {
+        let query = session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let placed = Set(session.document.placements.values.map(\.productID))
+        return session.document.products.values
+            .filter { !placed.contains($0.id) && $0.matchesSearch(query) }
+            .sorted { $0.title < $1.title }
     }
 
     private var photoPicker: some View {
@@ -286,18 +232,38 @@ struct CanvasScreen: View {
             CanvasImageDetails(product: product, library: session.importedAssets, status: Binding(
                 get: { statuses[placement.id] ?? "Wishlist" },
                 set: { statuses[placement.id] = $0 }
+            ), title: Binding(
+                get: { session.document.products[product.id]?.title ?? "" },
+                set: { session.updateProductTitle(product.id, title: $0) }
+            ), category: Binding(
+                get: { session.document.products[product.id]?.category ?? "" },
+                set: { session.updateProductCategory(product.id, category: $0) }
+            ), price: Binding(
+                get: { session.document.products[product.id]?.price },
+                set: { session.updateProductPrice(product.id, price: $0) }
             ), notes: Binding(
                 get: { session.document.products[product.id]?.notes ?? "" },
                 set: { session.updateProductNotes(product.id, notes: $0) }
-            ), onDelete: {
+            ), onRemoveSticker: {
                 onDelete()
                 session.deletePlacement(placement.id)
                 statuses[placement.id] = nil
                 if let group = session.inspectedGroup {
                     session.inspectedGroup = session.document.namedGroups?.first { $0.id == group.id }
                 }
-            }, availability: session.classification(for: product), onAvailability: {
-                session.updateAvailability($0, productID: product.id)
+            }, onDeleteProduct: {
+                onDelete()
+                session.deleteProduct(product.id)
+                if let group = session.inspectedGroup {
+                    session.inspectedGroup = session.document.namedGroups?.first { $0.id == group.id }
+                }
+            }, onBringToFront: {
+                session.bringToFront(placement.id)
+            }, onPlaceAnother: {
+                onDelete()
+                session.placeSticker(of: product.id)
+            }, onAvailability: {
+                session.recordAvailability($0, productID: product.id)
             })
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -313,7 +279,7 @@ private struct CanvasGroupNameDrawer: View {
     let document: CanvasDocument
     let members: [StickerPlacement]
     let library: ImportedAssetLibrary
-    let sum: Decimal
+    let totals: (byCurrency: [String: Decimal], hasUnpriced: Bool)
     @State private var name: String
     @State private var backgroundColour: CanvasGroupColour?
     @Binding private var notes: String
@@ -326,7 +292,7 @@ private struct CanvasGroupNameDrawer: View {
         self.library = library
         _notes = notes
         members = group.members.compactMap { document.placements[$0] }
-        sum = document.sum(for: group)
+        totals = document.totals(for: group)
         _name = State(initialValue: group.name)
         _backgroundColour = State(initialValue: group.backgroundColour)
     }
@@ -344,7 +310,11 @@ private struct CanvasGroupNameDrawer: View {
                         if value.count > 60 { name = String(value.prefix(60)) }
                         onUpdate(String(value.prefix(60)), backgroundColour)
                     }
-                LabeledContent(members.contains { document.products[$0.productID]?.price == nil } ? "Known-price subtotal" : "Cost of group", value: members.contains { document.products[$0.productID]?.price != nil } ? sum.formatted(.currency(code: "GBP")) : "Not available")
+                // Currencies are never added together; unpriced items make it a subtotal.
+                LabeledContent(totals.hasUnpriced ? "Known-price subtotal" : "Cost of group",
+                               value: totals.byCurrency.isEmpty ? "No prices"
+                                   : totals.byCurrency.sorted { $0.key < $1.key }
+                                       .map { $0.value.formatted(.currency(code: $0.key)) }.joined(separator: " + "))
                 Section("Notes") {
                     TextField("Add notes…", text: $notes, axis: .vertical)
                         .lineLimit(4...12)
@@ -428,9 +398,9 @@ private struct CanvasGroupItemThumbnail: View {
         .task(id: asset) {
             thumbnail = nil
             let asset = asset
-            let data = library.data(for: asset)
+            guard let data = await library.load(asset) else { return }
             let image = await Task.detached(priority: .userInitiated) {
-                return CanvasImageWorker.resolve(asset, data: data, tier: 192)
+                CanvasImageWorker.decode(data: data, tier: 192)
             }.value
             guard !Task.isCancelled else { return }
             thumbnail = image

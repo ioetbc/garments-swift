@@ -2,7 +2,7 @@ import Foundation
 
 @main struct NotesChecks {
     @MainActor static func main() throws {
-        let session = CanvasSession()
+        let session = CanvasFixtures.session().0
         session.committedGroups = CanvasFixtures.fit(&session.document, viewport: .init(width: 390, height: 844))
         session.refresh()
         let productID = session.document.placements[session.document.order[0]]!.productID
@@ -33,7 +33,7 @@ import Foundation
         precondition(session.document.products[productID]?.notes == notes)
 
         // Async import enrichment must preserve each undo snapshot's own notes.
-        let importing = CanvasSession()
+        let importing = CanvasFixtures.session().0
         let id = importing.document.placements[importing.document.order[0]]!.productID
         importing.updateProductNotes(id, notes: notes)
         let before = importing.document

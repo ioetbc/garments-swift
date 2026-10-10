@@ -14,7 +14,6 @@ nonisolated struct WorldPoint: Codable, Equatable, Sendable {
 }
 nonisolated enum CanvasConfiguration {
     static let zoom = 0.02...18.0
-    static let canvasSpacing = 5_000.0
     // World-space padding scales with products as the camera zooms.
     static let groupBackgroundPadding = 9.0
     static let edge = 1.0...8192.0

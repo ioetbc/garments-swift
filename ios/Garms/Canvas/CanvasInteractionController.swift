@@ -29,6 +29,7 @@ import CoreGraphics
     init(session:CanvasSession) { self.session = session }
     private func beginObject(state:State, point:CGPoint) {
         if original == nil {
+            session.gestureInProgress = true
             historyBaseline = session.snapshot()
             original = session.document
             originalGroups = session.committedGroups
@@ -43,10 +44,7 @@ import CoreGraphics
     }
     func liftImage(_ id:String, point:CGPoint, timestamp:TimeInterval? = nil) {
         guard state == .idle, session.document.placements[id] != nil else { return }
-        if let username = session.document.placements[id]?.canvasUsername {
-            liftGroup(session.document.canvasMembers(username), point: point)
-            return
-        }
+        guard session.isOnline else { session.error = CanvasSession.offlineMessage; return }
         session.select(id)
         beginObject(state:.imageDrag,point:point)
         // A fresh drag can intentionally rejoin a former neighbour. Snapshot the
@@ -57,11 +55,11 @@ import CoreGraphics
     }
     func liftGroup(_ ids:[String], point:CGPoint) {
         guard state == .idle else { return }
-        let username = ids.first.flatMap { session.document.placements[$0]?.canvasUsername }
-        let members = username.map { session.document.canvasMembers($0) } ?? ids
-        let items = members.compactMap { session.document.placements[$0] }
+        let items = ids.compactMap { session.document.placements[$0] }
         guard items.count > 1 else { return }
+        guard session.isOnline else { session.error = CanvasSession.offlineMessage; return }
         session.select(nil)
+        session.gestureInProgress = true
         originalGroups = session.committedGroups; originalDetached = session.detachedLinks
         historyBaseline = session.snapshot()
         original = session.document; baseline = items; state = .groupDrag
@@ -170,7 +168,7 @@ import CoreGraphics
         session.groupingPreview = nil
     }
     private func canAttract(_ moving: String, _ target: String) -> Bool {
-        session.document.placements[target]?.canvasUsername == nil && !releasedMembers.contains(target) && !session.detachedLinks.contains(CanvasGroupLink(moving,target))
+        !releasedMembers.contains(target) && !session.detachedLinks.contains(CanvasGroupLink(moving,target))
     }
     private func updateGroupingPreview(_ item: StickerPlacement) {
         let visible = CanvasGeometry.liftedBounds(item,zoom:session.camera.zoom)
@@ -209,19 +207,20 @@ import CoreGraphics
         let hits = Set(points.compactMap(hit))
         let world = points.map { session.camera.world($0,viewport:session.viewport) }
         return session.document.order.reversed().first { id in
-            guard hits.contains(id), let p = session.document.placements[id], p.canvasUsername == nil else { return false }
+            guard hits.contains(id), let p = session.document.placements[id] else { return false }
             return world.allSatisfy { p.bounds.contains($0.cg) }
         }
     }
     func prepareSecondFinger(target:String?, midpoint:CGPoint) {
-        if let target {
+        // Offline, pinching a product zooms the read-only canvas instead.
+        if let target, session.isOnline {
             if original != nil, state == .groupDrag || session.selection != target { finish() }
             session.select(target); beginObject(state:.imagePinch,point:midpoint)
         } else { beginCamera(point:midpoint) }
         session.render?()
     }
     func pinchStart(midpoint:CGPoint, recognizerScale:Double, target:String?) {
-        if let target {
+        if let target, session.isOnline {
             session.select(target); beginObject(state:.imagePinch,point:midpoint)
         } else {
             if original != nil { finish() }
@@ -271,6 +270,7 @@ import CoreGraphics
         clear()
         if let before { session.complete(before, baseline: historyBefore) }
         else { session.render?() }
+        session.endGesture()
     }
     func cancel() {
         if let original {
@@ -280,6 +280,7 @@ import CoreGraphics
         }
         else if state == .cameraPan || state == .cameraPinch { session.camera = cameraStart }
         clear(); session.refresh()
+        session.endGesture()
     }
     private func clear() { historyBaseline = nil; session.elasticLink = nil; springRest = nil; dragSample = nil; releasedMembers = []; originalGroups = []; originalDetached = []; original = nil; baseline = []; magneticTarget = nil; session.groupingPreview = nil; state = .idle }
 }

@@ -14,7 +14,7 @@ import UIKit
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let inbox = SharedImportInbox(directoryOverride: directory)
-        let session = CanvasSession()
+        let session = CanvasFixtures.session(sized: false).0
         let record = SharedImport(url: "https://shop.example/p?size=L#blue")
         let png = UIGraphicsImageRenderer(size: CGSize(width: 30, height: 60)).image { context in
             UIColor.red.setFill(); context.fill(CGRect(x: 0, y: 0, width: 30, height: 60))
@@ -46,7 +46,7 @@ import UIKit
         let product = session.document.products[placement.productID]!
         precondition(product.title == "Imported jacket" && product.price == nil)
         let data = session.importedAssets.data(for: product.asset)!
-        let decoded = CanvasImageWorker.resolve(product.asset, data: data, tier: 192)!
+        let decoded = CanvasImageWorker.decode(data: data, tier: 192)!
         precondition(decoded.width > 0)
         let store = CanvasAssetStore(); store.library = session.importedAssets
         let key = CanvasAssetStore.Key(asset: product.asset, tier: 192)
@@ -93,8 +93,7 @@ import UIKit
         paused.dismiss(second.id)
         try await Task.sleep(for: .milliseconds(80))
         precondition(paused.items.isEmpty && session.document.order.count == baseline)
-        let readySession = CanvasSession()
-        readySession.updateViewport(CGSize(width: 390, height: 844))
+        let readySession = CanvasFixtures.session(laidOut: true).0
         let readyCount = readySession.document.order.count
         let readyRecord = SharedImport(url: "https://shop.example/ready")
         let otherRecord = SharedImport(url: "https://shop.example/other")
@@ -113,7 +112,6 @@ import UIKit
         precondition(peak == 1)
         let uploads = readySession.document.namedGroups!.first(where: \.isRecentUploads)!
         precondition(Set(uploads.members) == Set(ready.items.compactMap(\.placementID)))
-        precondition(uploads.id == initialGroup.id)
         let roundTrip = try JSONDecoder().decode(CanvasDocument.self, from: JSONEncoder().encode(readySession.document))
         precondition(roundTrip.namedGroups == readySession.document.namedGroups)
         let saved = ready.items[0].placementID!
@@ -121,11 +119,15 @@ import UIKit
         ready.setActive(true)
         precondition(readySession.document.order.count == readyCount + 2)
         precondition(readySession.selection == saved)
+        // Sharing a link whose Product lost its Stickers places it again instead of importing a copy.
+        let savedProduct = readySession.document.placements[saved]!.productID
+        let productCount = readySession.document.products.count
         readySession.deletePlacement(saved)
         try inbox.enqueue(SharedImport(url: ready.items[0].record.url))
         ready.setActive(true)
         try await waitFor { ready.items.allSatisfy { $0.state == "Ready" } }
-        precondition(readySession.document.order.count == readyCount + 2)
+        precondition(readySession.document.order.count == readyCount + 2 && readySession.document.products.count == productCount)
+        precondition(readySession.document.placements.values.contains { $0.productID == savedProduct })
         try readySession.document.validate()
         let retained = SharedImport(url: "https://shop.example/retained")
         try inbox.enqueue(retained)
@@ -138,7 +140,7 @@ import UIKit
         try await waitFor { failingRemoval.items.first?.state == "Failed" }
         precondition(removals == 2 && failingRemoval.items.count == 1)
         precondition(tryCount(inbox) == 1)
-        let testSession = CanvasSession()
+        let testSession = CanvasFixtures.session(sized: false).0
         var testFetches = 0, testImages = 0, testCutouts = 0
         let testImports = ImportCoordinator(session: testSession, inbox: SharedImportInbox(directoryOverride: directory.appendingPathComponent("test-links")), fetch: { url in
             testFetches += 1
@@ -169,8 +171,7 @@ import UIKit
         precondition(testFetches == 2 && testImages == 2 && testCutouts == 2)
         testImports.setActive(false)
         // Keep each image in processing long enough to inspect the banner's batch and thumbnail.
-        let batchSession = CanvasSession()
-        batchSession.updateViewport(CGSize(width: 390, height: 844))
+        let batchSession = CanvasFixtures.session(laidOut: true).0
         let batchBaseline = batchSession.document.order.count
         var pending: CheckedContinuation<ImportedImageDownload.Artwork?, Never>?
         let batch = ImportCoordinator(session: batchSession,
@@ -202,8 +203,7 @@ import UIKit
         precondition(batch.progress == nil)
         let continuation = pending!; pending = nil; continuation.resume(returning: nil)
         // Gallery downloads preserve ordering, skip failures, and never invoke cutout processing.
-        let gallerySession = CanvasSession()
-        gallerySession.updateViewport(CGSize(width: 390, height: 844))
+        let gallerySession = CanvasFixtures.session(laidOut: true).0
         var galleryDownloads: [String] = [], galleryCutouts = 0
         let firstURL = "https://cdn.example/first.png", secondURL = "https://cdn.example/second.png"
         let badURL = "https://cdn.example/bad.png", thirdURL = "https://cdn.example/third.png"
@@ -239,8 +239,7 @@ import UIKit
         gallerySession.redo()
         precondition(gallerySession.document.placements[galleryPlacement] == nil)
         // A cancelled secondary download resumes without downloading the primary again.
-        let resumeSession = CanvasSession()
-        resumeSession.updateViewport(CGSize(width: 390, height: 844))
+        let resumeSession = CanvasFixtures.session(laidOut: true).0
         var resumeDownloads: [String] = [], resumeCutouts = 0
         let resume = ImportCoordinator(session: resumeSession,
             inbox: SharedImportInbox(directoryOverride: directory.appendingPathComponent("gallery-resume")),
@@ -258,11 +257,11 @@ import UIKit
         try await waitFor { resume.items.first?.state == "Ready" }
         precondition(resumeDownloads == [firstURL, secondURL, secondURL] && resumeCutouts == 1)
         let resumeProductID = resumeSession.document.placements[resume.items[0].placementID!]!.productID
-        precondition(resumeSession.document.products[resumeProductID]?.galleryAssets?.count == 1)
+        precondition(resumeSession.document.products[resumeProductID]?.galleryAssets.count == 1)
         let legacy = try JSONDecoder().decode(GarmsAPI.ImportedProduct.self, from: Data(#"{"url":"https://shop.example","title":null,"imageURL":"https://cdn.example/first.png"}"#.utf8))
         precondition(legacy.imageURLs == nil && legacy.imageURL == firstURL)
         // Photo batches share the normal queue, without metadata/image network calls.
-        let photosSession = CanvasSession()
+        let photosSession = CanvasFixtures.session(sized: false).0
         let photos = ImportCoordinator(session: photosSession,
             inbox: SharedImportInbox(directoryOverride: directory.appendingPathComponent("photos")),
             fetch: { _ in preconditionFailure("Photos must not fetch listing metadata") },
@@ -328,8 +327,7 @@ import UIKit
         try await Task.sleep(for: .milliseconds(120))
         precondition(photosSession.document.order.count == countBeforeDismiss, "Dismissed loads cannot publish artwork")
         try photosSession.document.validate()
-        let destination = CanvasSession()
-        destination.updateViewport(CGSize(width: 390, height: 844))
+        let destination = CanvasFixtures.session(laidOut: true).0
         let first = destination.insertImport(record, artwork: artwork)!
         destination.camera.center = .init(x: -10000, y: -10000)
         destination.camera.zoom = 0.1
