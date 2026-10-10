@@ -9,3 +9,4 @@ xcuserdata/
 node_modules/
 .next/
 .vercel/
+.claude/worktrees/
