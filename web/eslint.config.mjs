@@ -16,6 +16,16 @@ const eslintConfig = defineConfig([
   ]),
   // Destructuring away fields (e.g. Convex system fields) is the intended use.
   { rules: { "@typescript-eslint/no-unused-vars": ["warn", { ignoreRestSiblings: true }] } },
+  // Backend errors are tagged (Schema.TaggedError) inside Effect or ConvexError at the handler edge.
+  {
+    files: ["convex/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: "NewExpression[callee.name='Error']", message: "Use a Schema.TaggedError inside Effect, or ConvexError at the handler edge." },
+      ],
+    },
+  },
 ]);
 
 export default eslintConfig;

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in */web/convex/*.ts) cd \"$CLAUDE_PROJECT_DIR/web\" && out=$(npx tsc -p convex --noEmit 2>&1) || { echo \"$out\" >&2; exit 2; } ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}

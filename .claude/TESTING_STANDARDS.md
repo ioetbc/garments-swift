@@ -53,7 +53,7 @@ Red flags:
 
 Mock at **system boundaries** only:
 
-- External APIs (payment, email, Neon, etc.)
+- External APIs (payment, email, Firecrawl, etc.)
 - Time/randomness
 - File system when a real instance isn't practical
 

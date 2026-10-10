@@ -18,7 +18,27 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+
+    /* Effect diagnostics; enforced by `tsc` once `bun run prepare` has patched TypeScript. */
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnosticSeverity": {
+          "outdatedApi": "error",
+          "globalErrorInEffectFailure": "error",
+          "globalErrorInEffectCatch": "error",
+          "unknownInEffectCatch": "error",
+          "anyUnknownInErrorContext": "error",
+          "leakingRequirements": "error",
+          "runEffectInsideEffect": "error",
+          "tryCatchInEffectGen": "error",
+          "effectInVoidSuccess": "error",
+          "returnEffectInGen": "error",
+          "effectFnOpportunity": "warning"
+        }
+      }
+    ]
   },
   "include": ["./**/*"],
   "exclude": ["./_generated"]
