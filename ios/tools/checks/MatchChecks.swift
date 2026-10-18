@@ -18,11 +18,11 @@ import UIKit
     }
     static let screenshot = png(width: 30, height: 60, colour: .red)
     static let listing = png(width: 80, height: 40, colour: .blue)
-    static let jacket = Product.Match.Candidate(url: "https://shop.example/jacket", title: "Jacket", domain: "shop.example", thumbnail: "https://cdn.example/j.jpg")
+    static let jacket = Product.Match.Candidate(url: "https://shop.example/jacket", title: "Jacket", domain: "shop.example")
 
     /// A laid-out session whose imports search with `search`, fetch pages with `fetch` and download with `image`.
     @MainActor static func imports(
-        search: @escaping (ImportedImageDownload.Artwork) async throws -> [Product.Match.Candidate],
+        search: @escaping (ImportedImageDownload.Artwork) async throws -> Product.Match.Candidate?,
         fetch: @escaping (String) async throws -> GarmsAPI.ImportedProduct = { _ in preconditionFailure("No page should be fetched") },
         image: @escaping (String) async throws -> ImportedImageDownload.Artwork = { _ in listing },
         session: CanvasSession? = nil
@@ -47,7 +47,7 @@ import UIKit
         // A Screenshot import lands on the Canvas, then stays Awaiting match when no listing is found.
         do {
             var searched: [ImportedImageDownload.Artwork] = []
-            let (session, coordinator) = imports(search: { searched.append($0); return [] })
+            let (session, coordinator) = imports(search: { searched.append($0); return nil })
             let product = try await importScreenshot(coordinator, session)
             precondition(product.match == .init(status: .notFound))
             precondition(searched.count == 1 && searched[0].data == session.importedAssets.data(for: product.originalAsset ?? product.asset))
@@ -74,7 +74,7 @@ import UIKit
         // A found listing is imported onto the Product straight away.
         do {
             var fetched: [String] = []
-            let (session, coordinator) = imports(search: { _ in [jacket] }, fetch: { url in
+            let (session, coordinator) = imports(search: { _ in jacket }, fetch: { url in
                 fetched.append(url)
                 return .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg", price: Price(amount: 4500, currency: "GBP"))
             })
@@ -82,13 +82,13 @@ import UIKit
             try await waitFor { session.document.products.values.contains { $0.product_url == jacket.url && $0.match == nil } }
             let done = session.document.products.values.first { $0.product_url == jacket.url }!
             precondition(fetched == [jacket.url] && done.title == "Red Jacket" && done.price == Price(amount: 4500, currency: "GBP"))
-            precondition(coordinator.awaitingMatch.isEmpty)
+            precondition(coordinator.awaitingMatch.isEmpty && coordinator.pendingCount == 0)
         }
         // After nothing is found, confirming a link imports that page onto the Product; pasting one does the same.
         var resolved: [Product] = []
         for resolve in ["confirm", "paste"] {
             var fetched: [String] = [], downloads: [String] = []
-            let (session, coordinator) = imports(search: { _ in [] }, fetch: { url in
+            let (session, coordinator) = imports(search: { _ in nil }, fetch: { url in
                 fetched.append(url)
                 return .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg",
                              imageURLs: ["https://cdn.example/1.jpg", "https://cdn.example/2.jpg"], price: Price(amount: 4500, currency: "GBP"))
@@ -107,7 +107,7 @@ import UIKit
             precondition(moved.center == sticker.center && moved.z == sticker.z && max(moved.width, moved.height) == max(sticker.width, sticker.height))
             precondition(abs(moved.width / moved.height - 1.5) < 0.0001)
             precondition(session.document.namedGroups!.first { $0.id == group }!.members.contains(sticker.id))
-            precondition(coordinator.awaitingMatch.isEmpty && !coordinator.loadingMatches.contains(product.id))
+            precondition(coordinator.awaitingMatch.isEmpty && !coordinator.isLoadingMatch(product.id))
             session.select(sticker.id, showDetails: true)
             precondition(session.inspectedPlacement?.id == sticker.id)
             // Undo steps back over the import itself, never back to Awaiting match.
@@ -120,7 +120,7 @@ import UIKit
         precondition(resolved[0].title == resolved[1].title && resolved[0].product_url == resolved[1].product_url)
         // None of these and Skip end Awaiting match and leave the Product's details alone.
         do {
-            let (session, coordinator) = imports(search: { _ in [] })
+            let (session, coordinator) = imports(search: { _ in nil })
             let product = try await importScreenshot(coordinator, session)
             precondition(product.match?.status == .notFound)
             coordinator.skipMatch(product.id)
@@ -133,7 +133,7 @@ import UIKit
             let (session, coordinator) = imports(search: { _ in
                 attempts += 1
                 if attempts == 1 { throw URLError(.notConnectedToInternet) }
-                return []
+                return nil
             })
             let product = try await importScreenshot(coordinator, session)
             precondition(product.match == .init(status: .failed) && attempts == 1)
@@ -141,17 +141,40 @@ import UIKit
             try await waitFor { session.document.products[product.id]?.match?.status == .notFound }
             precondition(attempts == 2)
         }
-        // A page that can't be imported leaves the Product Awaiting match, with its candidates.
+        // A page that can't be imported leaves the Product Awaiting match, with the page to retry; its failed import row stays hidden.
         do {
-            let (session, coordinator) = imports(search: { _ in [jacket] }, fetch: { _ in throw URLError(.badServerResponse) })
+            var attempts = 0
+            let (session, coordinator) = imports(search: { _ in jacket }, fetch: { url in
+                attempts += 1
+                if attempts == 1 { throw URLError(.badServerResponse) }
+                return .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg")
+            })
             let product = try await importScreenshot(coordinator, session)
             try await waitFor { session.document.products[product.id]?.match?.status == .loadFailed }
-            precondition(session.document.products[product.id]?.match?.candidates == [jacket])
+            precondition(session.document.products[product.id]?.match?.candidate == jacket)
             precondition(session.document.products[product.id]?.asset == product.asset)
+            precondition(coordinator.visibleItems.isEmpty && coordinator.pendingCount == 1)
+            coordinator.confirm(product.id, url: jacket.url)
+            try await waitFor { session.document.products[product.id]?.match == nil }
+            precondition(session.document.products[product.id]?.product_url == jacket.url && coordinator.pendingCount == 0)
+        }
+        // Every Sticker of the Product takes the listing's shape, not only the one the import ran through.
+        do {
+            let (session, coordinator) = imports(search: { _ in nil }, fetch: { url in
+                .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg")
+            })
+            let product = try await importScreenshot(coordinator, session)
+            let second = session.placeSticker(of: product.id)!
+            coordinator.confirm(product.id, url: jacket.url)
+            try await waitFor { session.document.products[product.id]?.match == nil }
+            for sticker in session.document.placements.values where sticker.productID == product.id {
+                precondition(abs(sticker.width / sticker.height - 1.5) < 0.0001)
+            }
+            precondition(session.document.placements[second] != nil)
         }
         // Confirming a link another Product already has links the Sticker to that Product, where it stands.
         do {
-            let (session, coordinator) = imports(search: { _ in [] })
+            let (session, coordinator) = imports(search: { _ in nil })
             let existing = session.document.products.values.sorted { $0.id < $1.id }.first!
             let product = try await importScreenshot(coordinator, session)
             let sticker = session.document.placements.values.first { $0.productID == product.id }!

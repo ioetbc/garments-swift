@@ -12,9 +12,11 @@ import Observation
     @ObservationIgnored private var owner: String?
     @ObservationIgnored private let inbox: SharedImportInbox
     @ObservationIgnored private let makeSync: () -> CanvasSync
+    @ObservationIgnored private let server: GarmsServer
 
-    init(inbox: SharedImportInbox = .init(), makeSync: @escaping () -> CanvasSync) {
+    init(inbox: SharedImportInbox = .init(), server: GarmsServer, makeSync: @escaping () -> CanvasSync) {
         self.inbox = inbox
+        self.server = server
         self.makeSync = makeSync
     }
 
@@ -23,7 +25,7 @@ import Observation
     func follow(_ id: String?) {
         if id == nil || (owner != nil && id != owner) { teardown() }
         owner = id
-        if id != nil, canvas == nil { canvas = CanvasSession(sync: makeSync()) }
+        if id != nil, canvas == nil { canvas = CanvasSession(sync: makeSync(), server: server) }
     }
 
     private func teardown() {

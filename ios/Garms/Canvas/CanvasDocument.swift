@@ -21,7 +21,7 @@ nonisolated struct Product: Codable, Equatable, Identifiable, Sendable {
         case id = "key", title, category, asset = "cutout", aspect, product_url = "sourceUrl", notes,
              originalAsset = "original", galleryAssets = "photos", price, availability, match
     }
-    /// The search for the listing a Screenshot shows, and the pages it offered.
+    /// The search for the listing a Screenshot shows, and the page it found.
     nonisolated struct Match: Codable, Equatable, Sendable {
         enum Status: String, Codable, Sendable { case searching, found, notFound = "none", failed, loadFailed }
         /// A web page that might be the listing.
@@ -29,10 +29,10 @@ nonisolated struct Product: Codable, Equatable, Identifiable, Sendable {
             var url: String
             var title: String? = nil
             var domain: String
-            var thumbnail: String? = nil
         }
         var status: Status
-        var candidates: [Candidate] = []
+        /// Kept so a failed import of the found page can be retried.
+        var candidate: Candidate? = nil
     }
     var detailAssets: [String] {
         var seen: Set<String> = []

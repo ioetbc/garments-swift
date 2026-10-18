@@ -13,6 +13,7 @@ import Observation
     /// Set by the interaction controller so remote snapshots never land under a finger.
     @ObservationIgnored var gestureInProgress = false
     @ObservationIgnored let sync: CanvasSync
+    @ObservationIgnored let server: GarmsServer
     @ObservationIgnored private var pendingRemote: CanvasRemote?
     @ObservationIgnored private var writesInFlight = 0
     @ObservationIgnored private var viewportSave: Task<Void, Never>?
@@ -58,10 +59,9 @@ import Observation
     // ponytail: launch-time checks until a server cron owns Availability; skips anything checked in the last day.
     func loadAvailability(
         now: Date = Date(),
-        fetch: @escaping @MainActor @Sendable (String) async throws -> GarmsAPI.ProductClassification? = {
-            try await GarmsAPI.scrapePage(url: $0).classification
-        }
+        fetch: (@MainActor @Sendable (String) async throws -> GarmsAPI.ProductClassification?)? = nil
     ) async {
+        let fetch = fetch ?? { [server] in try await server.scrapePage(url: $0).classification }
         let productIDs = Set(document.placements.values.map(\.productID))
         let stale = now.timeIntervalSince1970 * 1000 - 24 * 60 * 60 * 1000
         let products = productIDs.compactMap { document.products[$0] }
@@ -117,8 +117,9 @@ import Observation
     }
     var selected: [StickerPlacement] { selection.flatMap { document.placements[$0] }.map { [$0] } ?? [] }
 
-    init(sync: CanvasSync) {
+    init(sync: CanvasSync, server: GarmsServer) {
         self.sync = sync
+        self.server = server
         importedAssets = ImportedAssetLibrary(sync: sync)
         importedAssets.failure = { [weak self] in self?.error = $0 }
         refresh()
@@ -429,7 +430,7 @@ import Observation
     func updateImport(_ id: String, title: String?, price: Price?, artwork: ImportedImageDownload.Artwork?, original: Bool = true) -> String? {
         guard document.placements[id] != nil else { return nil }
         resolveInteraction?()
-        guard var placement = document.placements[id], var product = document.products[placement.productID] else { return nil }
+        guard let placement = document.placements[id], var product = document.products[placement.productID] else { return nil }
         if let artwork { guard artwork.aspect.isFinite, artwork.aspect > 0 else { return nil } }
         let before = document
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { product.title = title }
@@ -438,10 +439,12 @@ import Observation
             product.asset = importedAssets.insert(artwork.data)
             if original { product.originalAsset = product.asset }
             product.aspect = artwork.aspect
-            placement.fit(aspect: artwork.aspect)
+            // Every Sticker shows the Product's image, so each keeps its centre and longest edge at the new aspect.
+            for (sticker, shown) in document.placements where shown.productID == product.id {
+                document.placements[sticker]?.fit(aspect: artwork.aspect)
+            }
         }
         document.products[product.id] = product
-        document.placements[id] = placement
         complete(before, recordHistory: false)
         return document.products[product.id] == product ? product.asset : nil
     }
@@ -454,30 +457,16 @@ import Observation
         document.products[productID]?.match = match
         complete(before, recordHistory: false)
     }
-    /// Fills a Product Awaiting match from its confirmed listing, exactly as a shared link would:
-    /// link, title, Price and Photos from the page, the page's image as Cutout and Original,
-    /// and the Screenshot kept as a Photo. Its Stickers keep their centre, longest edge, stacking and Group.
-    func resolveMatch(_ productID: String, url: String, page: GarmsAPI.ImportedProduct,
-                      original: ImportedImageDownload.Artwork, cutout: ImportedImageDownload.Artwork?,
-                      photos: [ImportedImageDownload.Artwork]) {
+    /// Ends Awaiting match once its listing has been imported onto the Product like a shared link:
+    /// records the link and keeps the Screenshot as the first Photo.
+    func resolveMatch(_ productID: String, url: String, screenshot: String) {
         guard var product = document.products[productID], product.match != nil else { return }
         resolveInteraction?()
         let before = document
-        let screenshot = product.originalAsset ?? product.asset
-        let shown = cutout ?? original
         product.product_url = url
-        if let title = page.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { product.title = title }
-        product.price = page.price
-        let originalAsset = importedAssets.insert(original.data)
-        product.originalAsset = originalAsset
-        product.asset = cutout.map { importedAssets.insert($0.data) } ?? originalAsset
-        product.aspect = shown.aspect
-        product.galleryAssets = [screenshot] + photos.map { importedAssets.insert($0.data) }
+        product.galleryAssets.insert(screenshot, at: 0)
         product.match = nil
         document.products[productID] = product
-        for (id, placement) in document.placements where placement.productID == productID {
-            document.placements[id]?.fit(aspect: shown.aspect)
-        }
         complete(before, recordHistory: false)
     }
     /// Re-points every Sticker of `productID` at `existing`, which already holds the same link, and deletes `productID`.

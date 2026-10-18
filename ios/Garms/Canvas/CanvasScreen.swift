@@ -43,7 +43,7 @@ struct CanvasScreen: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { showingImports = true } label: {
-                            Label("Imports (\(session.imports.items.filter { $0.state != "Ready" }.count + session.imports.awaitingMatch.count))", systemImage: "square.and.arrow.down")
+                            Label("Imports (\(session.imports.pendingCount))", systemImage: "square.and.arrow.down")
                         }
                     }
                     ToolbarItemGroup(placement: .bottomBar) {
@@ -130,21 +130,17 @@ struct CanvasScreen: View {
                         }
                         if let notice = session.imports.notice { Text(notice).font(.callout) }
                         let awaiting = session.imports.awaitingMatch
-                        if session.imports.items.isEmpty && awaiting.isEmpty { Text("Choose photos or share a link to import items.") }
+                        let visible = session.imports.visibleItems
+                        if visible.isEmpty && awaiting.isEmpty { Text("Choose photos or share a link to import items.") }
                         if !awaiting.isEmpty {
                             Section("Find the listing") {
                                 ForEach(awaiting) { product in
-                                    AwaitingMatchRow(product: product, library: session.importedAssets,
-                                                     loading: session.imports.loadingMatches.contains(product.id), imports: session.imports)
+                                    AwaitingMatchRow(product: product, library: session.importedAssets, imports: session.imports)
                                         .id(product.id)
                                 }
                             }
                         }
-                        // A Screenshot's own import row gives way to its Awaiting match row.
-                        let awaitingIDs = Set(awaiting.map(\.id))
-                        ForEach(session.imports.items.filter { item in
-                            !awaitingIDs.contains(item.placementID.flatMap { session.document.placements[$0]?.productID } ?? "")
-                        }) { item in
+                        ForEach(visible) { item in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(item.displayName).lineLimit(2)
                                 Text(item.failure ?? (item.stage == .loadingPhoto && item.state == "Processing" ? "Loading photo…" : item.stage == .removingBackground && item.state == "Processing" ? "Removing background…" : item.note ?? item.state)).font(.caption)
@@ -160,7 +156,7 @@ struct CanvasScreen: View {
                                     Task {
                                         defer { sendingLogs.remove(id) }
                                         do {
-                                            try await GarmsAPI.sendImportLog(report)
+                                            try await session.server.sendImportLog(report)
                                             logDelivery[id] = "Sent — check the Convex dashboard logs."
                                         } catch {
                                             logDelivery[id] = ImportDiagnostics.describe(error)
@@ -259,7 +255,7 @@ struct CanvasScreen: View {
     private func productDetails(for placement: StickerPlacement, onDelete: @escaping () -> Void) -> some View {
         let _ = session.revision
         if let product = session.document.products[placement.productID] {
-            CanvasImageDetails(product: product, library: session.importedAssets, status: Binding(
+            CanvasImageDetails(product: product, library: session.importedAssets, server: session.server, status: Binding(
                 get: { statuses[placement.id] ?? "Wishlist" },
                 set: { statuses[placement.id] = $0 }
             ), title: Binding(
@@ -407,78 +403,7 @@ private struct CanvasGroupNameDrawer: View {
 
 }
 
-/// One Product Awaiting match: its Candidate matches, a link field, and the way out.
-private struct AwaitingMatchRow: View {
-    let product: Product
-    let library: ImportedAssetLibrary
-    let loading: Bool
-    let imports: ImportCoordinator
-    @State private var link = ""
-
-    var body: some View {
-        let match = product.match ?? .init(status: .searching)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                CanvasGroupItemThumbnail(asset: product.asset, library: library)
-                VStack(alignment: .leading) {
-                    Text(product.title).lineLimit(1)
-                    Group {
-                        if loading { Text("Loading page…") }
-                        else {
-                            switch match.status {
-                            case .searching: Text("Searching for the listing…")
-                            case .found: Text("Tap the exact listing")
-                            case .notFound: Text("No matches found")
-                            case .failed: Text("Couldn't search")
-                            case .loadFailed: Text("Couldn't load that page")
-                            }
-                        }
-                    }
-                    .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if match.status == .found || match.status == .loadFailed {
-                ForEach(match.candidates, id: \.url) { candidate in
-                    Button { imports.confirm(product.id, url: candidate.url) } label: {
-                        HStack(spacing: 12) {
-                            AsyncImage(url: candidate.thumbnail.flatMap(URL.init(string:))) { image in
-                                image.resizable().scaledToFill()
-                            } placeholder: { Color.secondary.opacity(0.15) }
-                            .frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 6))
-                            .accessibilityHidden(true)
-                            VStack(alignment: .leading) {
-                                Text(candidate.domain).font(.caption).foregroundStyle(.secondary)
-                                Text(candidate.title ?? candidate.url).lineLimit(2)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Imports this listing")
-                }
-            }
-            HStack {
-                TextField("Paste a link", text: $link)
-                    .textContentType(.URL).keyboardType(.URL)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .submitLabel(.go)
-                    .onSubmit { imports.confirm(product.id, url: link) }
-                Button("Use link") { imports.confirm(product.id, url: link) }
-                    .disabled(link.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            .buttonStyle(.bordered)
-            HStack {
-                if match.status == .failed { Button("Retry search") { imports.retrySearch(product.id) } }
-                Button(match.status == .found || match.status == .loadFailed ? "None of these" : "Skip") { imports.skipMatch(product.id) }
-            }
-            .buttonStyle(.bordered)
-        }
-        .disabled(loading)
-    }
-}
-
-private struct CanvasGroupItemThumbnail: View {
+struct CanvasGroupItemThumbnail: View {
     let asset: String
     let library: ImportedAssetLibrary
     @State private var thumbnail: CGImage?

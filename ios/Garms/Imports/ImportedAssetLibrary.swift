@@ -84,6 +84,24 @@ nonisolated enum ImportedImageDownload {
             return Artwork(data: output as Data, aspect: Double(image.width) / Double(image.height))
         }.value
     }
+    /// The image flattened onto white as a JPEG bounded to 1,024 pixels, as sent to search.
+    static func flattenedJPEG(_ artwork: Artwork) async throws -> Data {
+        try await Task.detached {
+            let failed = ImageError.detail("The Screenshot could not be prepared for searching.")
+            guard let image = CanvasImageWorker.decode(data: artwork.data, tier: 1024),
+                  let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw failed }
+            let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(bounds)
+            context.draw(image, in: bounds)
+            let output = NSMutableData()
+            guard let flat = context.makeImage(),
+                  let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil) else { throw failed }
+            CGImageDestinationAddImage(destination, flat, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else { throw failed }
+            return output as Data
+        }.value
+    }
     enum ImageError: LocalizedError {
         case invalid, detail(String)
         var errorDescription: String? {

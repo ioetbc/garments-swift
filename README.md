@@ -111,7 +111,7 @@ library access to tell) are the exception: once the Sticker is on the Canvas, th
 Screenshot, flattened onto white, is sent to the `matches:search` Convex action. A vision
 model behind the AI Gateway reads the shop, its website and the product title off it, then
 Firecrawl searches that title on the shop's site (signed-in Users only, 30 searches per User per day). The listing found is imported
-straight away through `/api/import`, exactly like a shared link. When nothing is found or the
+straight away through the `imports:product` action, exactly like a shared link. When nothing is found or the
 import fails, the Product stays **Awaiting match** until the User pastes a link in the Imports sheet or skips. As with link imports, items remain in session memory
 and are lost when the app is terminated. Each photo's detected subjects stay
 together in one sticker; selecting individual garments within a photo is not supported.

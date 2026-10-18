@@ -3,6 +3,7 @@ import SwiftUI
 struct CanvasImageDetails: View {
     let product: Product
     let library: ImportedAssetLibrary
+    let server: GarmsServer
     @Binding var status: String
     @Binding var title: String
     @Binding var category: String
@@ -197,7 +198,7 @@ struct CanvasImageDetails: View {
             scrapeError = nil
             defer { scrapingPage = false }
             do {
-                let page = try await GarmsAPI.scrapePage(url: product.product_url)
+                let page = try await server.scrapePage(url: product.product_url)
                 try Task.checkCancellation()
                 scrapedPage = page
                 if let classification = page.classification { onAvailability(classification) }
@@ -211,15 +212,11 @@ struct CanvasImageDetails: View {
             connectionMessage = nil
             connectionFailed = false
             defer { checkingConnection = false }
-            do {
-                let message = try await GarmsAPI.checkConnection()
-                try Task.checkCancellation()
-                connectionMessage = message
-            } catch {
-                guard !Task.isCancelled else { return }
-                connectionFailed = true
-                connectionMessage = error.localizedDescription
-            }
+            let connected = await server.isConnected()
+            guard !Task.isCancelled else { return }
+            connectionFailed = !connected
+            connectionMessage = connected ? "Connected to Garms." : "Not connected to Garms. Check your internet connection."
+
         }
     }
 }

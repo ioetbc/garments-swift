@@ -6,7 +6,7 @@ import Foundation
         defer { try? FileManager.default.removeItem(at: root) }
         LocalUser.directory = root.appending(path: "cache", directoryHint: .isDirectory)
         let inbox = SharedImportInbox(directoryOverride: root.appending(path: "inbox", directoryHint: .isDirectory))
-        let user = LocalUser(inbox: inbox) { FakeCanvasSync(remote: CanvasFixtures.remote(count: 3)) }
+        let user = LocalUser(inbox: inbox, server: FakeGarmsServer()) { FakeCanvasSync(remote: CanvasFixtures.remote(count: 3)) }
 
         user.follow("user_a")
         weak var session = user.canvas

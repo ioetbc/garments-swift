@@ -1,5 +1,14 @@
 import Foundation
 
+/// GarmsServer for checks: every call is unexpected unless a check passes its own closure to the code under test.
+@MainActor final class FakeGarmsServer: GarmsServer {
+    func isConnected() async -> Bool { true }
+    func importProduct(url: String) async throws -> GarmsAPI.ImportedProduct { throw URLError(.notConnectedToInternet) }
+    func scrapePage(url: String) async throws -> GarmsAPI.ScrapedPage { throw URLError(.notConnectedToInternet) }
+    func sendImportLog(_ report: String) async throws {}
+    func findListing(_ jpeg: Data) async throws -> Product.Match.Candidate? { nil }
+}
+
 /// In-memory CanvasSync: records what the session sends and delivers snapshots on demand.
 @MainActor final class FakeCanvasSync: CanvasSync {
     var remote: CanvasRemote
@@ -34,7 +43,6 @@ import Foundation
         uploads[key] = data
         completion(nil)
     }
-    func findCandidates(_ jpeg: Data) async throws -> [Product.Match.Candidate] { [] }
     func completeWrites() {
         holdWrites = false
         let completions = heldCompletions
@@ -70,7 +78,7 @@ extension CanvasFixtures {
     /// A loaded session over a fake sync, sized like a phone.
     @MainActor static func session(count: Int = 100, laidOut: Bool = false, sized: Bool = true) -> (CanvasSession, FakeCanvasSync) {
         let sync = FakeCanvasSync(remote: remote(count: count, laidOut: laidOut))
-        let session = CanvasSession(sync: sync)
+        let session = CanvasSession(sync: sync, server: FakeGarmsServer())
         if sized { session.updateViewport(viewport) }
         return (session, sync)
     }

@@ -65,8 +65,15 @@ extension CanvasChangeSet: ConvexEncodable {}
         }
     }
 
+    /// The last mutation sent; each waits for the one before it.
+    private var lastCall: Task<Void, Never>?
+
+    /// Mutations run one at a time, in the order they were made: each carries whole rows,
+    /// so one landing late would overwrite a newer edit with an older copy.
     private func call(_ name: String, _ args: [String: ConvexEncodable?], completion: @escaping @MainActor (Error?) -> Void) {
-        Task {
+        let previous = lastCall
+        lastCall = Task { [client] in
+            await previous?.value
             do { try await client.mutation(name, with: args); completion(nil) }
             catch { completion(error) }
         }
@@ -102,11 +109,5 @@ extension CanvasChangeSet: ConvexEncodable {}
                 completion(nil)
             } catch { completion(error) }
         }
-    }
-
-    func findCandidates(_ jpeg: Data) async throws -> [Product.Match.Candidate] {
-        var args: [String: ConvexEncodable?] = ["image": jpeg.base64EncodedString()]
-        if let region = Locale.current.region?.identifier, region.count == 2 { args["region"] = region }
-        return try await client.action("matches:search", with: args)
     }
 }

@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 import OSLog
-import ImageIO
 
 @Observable @MainActor final class ImportCoordinator {
     enum Stage { case loadingPhoto, fetching, downloading, removingBackground }
@@ -14,6 +13,8 @@ import ImageIO
         /// Photos marks this image as a Screenshot, so its listing is searched for once it is on the Canvas.
         var isScreenshot = false
         var searched = false
+        /// Set when this link import resolves a Product Awaiting match: that Product, and its Screenshot to keep as a Photo.
+        var resolving: (product: String, screenshot: String)?
         var displayName: String { isPhoto ? record.suggestedTitle ?? "Photo" : record.url }
         var placementID: String?
         var state = "Queued"
@@ -56,16 +57,17 @@ import ImageIO
     @ObservationIgnored private let fetch: (String) async throws -> GarmsAPI.ImportedProduct
     @ObservationIgnored private let image: (String) async throws -> ImportedImageDownload.Artwork
     @ObservationIgnored private let cutout: ((ImportedImageDownload.Artwork) async throws -> ImportedImageDownload.Artwork?)?
-    @ObservationIgnored private let search: (ImportedImageDownload.Artwork) async throws -> [Product.Match.Candidate]
+    @ObservationIgnored private let search: (ImportedImageDownload.Artwork) async throws -> Product.Match.Candidate?
     init(session: CanvasSession, inbox: SharedImportInbox = .init(),
          acknowledge: ((URL) throws -> Void)? = nil,
-         fetch: @escaping (String) async throws -> GarmsAPI.ImportedProduct = { try await GarmsAPI.importProduct(url: $0) },
+         fetch: ((String) async throws -> GarmsAPI.ImportedProduct)? = nil,
          image: @escaping (String) async throws -> ImportedImageDownload.Artwork = { try await ImportedImageDownload.fetch($0) },
          cutout: ((ImportedImageDownload.Artwork) async throws -> ImportedImageDownload.Artwork?)? = nil,
-         search: ((ImportedImageDownload.Artwork) async throws -> [Product.Match.Candidate])? = nil) {
-        self.session = session; self.inbox = inbox; self.fetch = fetch; self.image = image; self.cutout = cutout
+         search: ((ImportedImageDownload.Artwork) async throws -> Product.Match.Candidate?)? = nil) {
+        self.session = session; self.inbox = inbox; self.image = image; self.cutout = cutout
         self.acknowledge = acknowledge ?? { try inbox.acknowledge($0) }
-        self.search = search ?? { [sync = session.sync] in try await sync.findCandidates(try await Self.searchImage($0)) }
+        self.fetch = fetch ?? { [server = session.server] in try await server.importProduct(url: $0) }
+        self.search = search ?? { [server = session.server] in try await server.findListing(try await ImportedImageDownload.flattenedJPEG($0)) }
     }
     func setActive(_ value: Bool) {
         active = value
@@ -197,7 +199,7 @@ import ImageIO
                 } else {
                     items[index].checkpoint = nil
                     items[index].stage = .fetching
-                    log(id, "Fetching product metadata and markdown via API /api/import → Firecrawl.")
+                    log(id, "Fetching product metadata and markdown via the imports:product action → Firecrawl.")
                     let result = try await fetch(url)
                     try Task.checkCancellation()
                     guard valid(id, attempt, placement) else { continue }
@@ -278,6 +280,9 @@ import ImageIO
                     log(id, "Background removed and cutout installed on canvas in \(String(format: "%.2f", Date().timeIntervalSince(cutoutStarted)))s (\(extracted?.data.count ?? 0) PNG bytes).")
                 }
                 log(id, "Import ready in \(String(format: "%.2f", Date().timeIntervalSince(started)))s.")
+                if let resolving = items[current].resolving {
+                    session.resolveMatch(resolving.product, url: url, screenshot: resolving.screenshot)
+                }
                 if items[current].isScreenshot && !items[current].searched,
                    let productID = session.document.placements[placement]?.productID {
                     items[current].searched = true
@@ -291,6 +296,11 @@ import ImageIO
                 log(id, "Import failed during \(stage): " + details, warning: true)
                 items[current].stage = nil
                 items[current].state = "Failed"; items[current].failure = details
+                // Its Awaiting match row stands in for this row, so the failure shows there.
+                if let resolving = items[current].resolving, var match = session.document.products[resolving.product]?.match {
+                    match.status = .loadFailed
+                    session.setMatch(resolving.product, match)
+                }
             }
         }
     }
@@ -333,8 +343,20 @@ import ImageIO
         return document.products.values.filter { $0.match != nil }
             .sorted { (z[$0.id] ?? "", $0.id) < (z[$1.id] ?? "", $1.id) }
     }
-    /// Products whose confirmed link is being imported.
-    private(set) var loadingMatches: Set<String> = []
+    /// Import rows to show: a Product Awaiting match shows its own row instead of its imports.
+    var visibleItems: [Item] {
+        guard let session else { return items }
+        let awaiting = Set(awaitingMatch.map(\.id))
+        return items.filter { item in
+            !awaiting.contains(item.placementID.flatMap { session.document.placements[$0]?.productID } ?? "")
+        }
+    }
+    /// Rows in the Imports sheet that still need something: unfinished imports and Products Awaiting match.
+    var pendingCount: Int { visibleItems.filter { $0.state != "Ready" }.count + awaitingMatch.count }
+    /// Whether this Product's confirmed link is being imported.
+    func isLoadingMatch(_ productID: String) -> Bool {
+        items.contains { $0.resolving?.product == productID && ($0.state == "Queued" || $0.state == "Processing") }
+    }
     /// A short note about the last resolution, such as a merge into an existing Product.
     var notice: String?
     @ObservationIgnored private var searching: Set<String> = []
@@ -347,8 +369,8 @@ import ImageIO
             // The whole Screenshot, not the Cutout: the shop is read off its interface.
             if let product = session.document.products[productID], let data = await session.importedAssets.load(product.originalAsset ?? product.asset) {
                 do {
-                    let candidates = try await search(.init(data: data, aspect: product.aspect))
-                    match = .init(status: candidates.isEmpty ? .notFound : .found, candidates: Array(candidates.prefix(5)))
+                    let candidate = try await search(.init(data: data, aspect: product.aspect))
+                    match = .init(status: candidate == nil ? .notFound : .found, candidate: candidate)
                 } catch {}
             }
             self?.searching.remove(productID)
@@ -356,7 +378,7 @@ import ImageIO
             guard session.document.products[productID]?.match?.status == .searching else { return }
             session.setMatch(productID, match)
             // The search returns the one listing it is surest of: import it straight away.
-            if let found = match.candidates.first { self?.confirm(productID, url: found.url) }
+            if let found = match.candidate { self?.confirm(productID, url: found.url) }
         }
     }
     /// Searches again after a failed search.
@@ -364,10 +386,10 @@ import ImageIO
         guard session?.document.products[productID]?.match?.status == .failed else { return }
         runSearch(productID)
     }
-    /// Imports this link onto the Product Awaiting match: a tapped Candidate match or a pasted link.
+    /// Imports this link onto the Product Awaiting match, exactly as a shared link: the found listing or a pasted link.
     /// A link already saved on another Product links the Sticker to that Product instead.
     func confirm(_ productID: String, url: String) {
-        guard let session, session.document.products[productID]?.match != nil, !loadingMatches.contains(productID) else { return }
+        guard let session, let product = session.document.products[productID], product.match != nil, !isLoadingMatch(productID) else { return }
         notice = nil
         let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let key = try? SharedLink.normalized(url) else { notice = SharedLink.LinkError.invalid.localizedDescription; return }
@@ -376,53 +398,17 @@ import ImageIO
             notice = "Already saved — linked to your existing item."
             return
         }
-        loadingMatches.insert(productID)
-        Task { [weak self, fetch, image, cutout] in
-            do {
-                let page = try await fetch(url)
-                var addresses: [String] = []
-                for address in (page.imageURLs ?? []) + [page.imageURL].compactMap({ $0 }) where !addresses.contains(address) { addresses.append(address) }
-                guard let first = addresses.first else { throw ImportedImageDownload.ImageError.detail("The page has no product image.") }
-                let original = try await image(first)
-                let extracted = if let cutout { try? await cutout(original) } else { try? await ForegroundCutoutProcessor.extract(original) }
-                var photos: [ImportedImageDownload.Artwork] = []
-                for address in addresses.dropFirst() {
-                    if let photo = try? await image(address) { photos.append(photo) }
-                }
-                self?.loadingMatches.remove(productID)
-                session.resolveMatch(productID, url: url, page: page, original: original, cutout: extracted.flatMap { $0 }, photos: photos)
-            } catch {
-                self?.loadingMatches.remove(productID)
-                guard var match = session.document.products[productID]?.match else { return }
-                match.status = .loadFailed
-                session.setMatch(productID, match)
-            }
-        }
+        // The import fills the Product through one of its Stickers; a Product that lost them all gets one back.
+        guard let sticker = session.document.placements.values.first(where: { $0.productID == productID })?.id
+                ?? session.placeSticker(of: productID) else { notice = "Couldn't place this item on the Canvas."; return }
+        items.removeAll { $0.resolving?.product == productID }
+        let record = SharedImport(url: url)
+        enqueue(Item(id: record.id, record: record, resolving: (productID, product.originalAsset ?? product.asset), placementID: sticker))
+        start()
     }
     /// None of these, or Skip: keeps the Product as imported, with no link.
     func skipMatch(_ productID: String) {
         notice = nil
         session?.setMatch(productID, nil)
-    }
-    /// The image sent to search: the Screenshot flattened onto white, as JPEG.
-    nonisolated static func searchImage(_ artwork: ImportedImageDownload.Artwork) async throws -> Data {
-        try await Task.detached {
-            guard let image = CanvasImageWorker.decode(data: artwork.data, tier: 1024),
-                  let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
-                throw ImportedImageDownload.ImageError.detail("The Screenshot could not be prepared for searching.")
-            }
-            let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-            context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(bounds)
-            context.draw(image, in: bounds)
-            let output = NSMutableData()
-            guard let flat = context.makeImage(),
-                  let destination = CGImageDestinationCreateWithData(output, "public.jpeg" as CFString, 1, nil) else {
-                throw ImportedImageDownload.ImageError.detail("The Screenshot could not be prepared for searching.")
-            }
-            CGImageDestinationAddImage(destination, flat, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
-            guard CGImageDestinationFinalize(destination) else { throw ImportedImageDownload.ImageError.detail("The Screenshot could not be prepared for searching.") }
-            return output as Data
-        }.value
     }
 }

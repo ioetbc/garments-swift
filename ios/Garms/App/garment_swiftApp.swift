@@ -28,8 +28,7 @@ struct garment_swiftApp: App {
             deploymentUrl: address ?? Bundle.main.object(forInfoDictionaryKey: "CONVEX_URL") as? String ?? "",
             authProvider: ClerkConvexAuthProvider())
         self.convex = convex
-        GarmsAPI.client = convex
-        _user = State(initialValue: LocalUser { ConvexCanvasSync(client: convex) })
+        _user = State(initialValue: LocalUser(server: ConvexGarmsServer(client: convex)) { ConvexCanvasSync(client: convex) })
     }
 
     var body: some Scene {
