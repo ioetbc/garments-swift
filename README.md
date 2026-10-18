@@ -51,10 +51,10 @@ Server-only credentials belong in `web/.env.local` locally and the hosting provi
 ## Convex backend
 
 Every Canvas, Product, Sticker and Group is stored in Convex and scoped to the User
-from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Users sign in with Apple
+from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Users sign in with email and password or Apple
 through Clerk (`docs/adr/0001`); a request with no identity is always rejected. Each Convex
 deployment is paired with one Clerk instance: dev ↔ Clerk development, prod ↔ Clerk production.
-In each Clerk instance, enable Sign in with Apple as the only method, register the iOS app
+In each Clerk instance, enable Email (with password, verified by email code) and Sign in with Apple, register the iOS app
 as a native application, and activate the Convex integration.
 
 ```sh

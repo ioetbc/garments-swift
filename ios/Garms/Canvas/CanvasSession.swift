@@ -1,6 +1,5 @@
 import SwiftUI
 import Observation
-import PencilKit
 
 @Observable @MainActor final class CanvasSession {
     @ObservationIgnored var document = CanvasDocument()
@@ -34,8 +33,6 @@ import PencilKit
     var inspectedPlacement: StickerPlacement?
     var inspectedGroup: CanvasNamedGroup?
     var error: String?
-    var isDrawing = false
-    @ObservationIgnored var inkDrawing = PKDrawing()
 
     /// Records a successful check on the Product. Failed checks keep the last known Availability.
     func recordAvailability(_ classification: GarmsAPI.ProductClassification, productID: String) {
@@ -327,7 +324,7 @@ import PencilKit
     }
     func snapshot(document: CanvasDocument? = nil) -> CanvasSnapshot {
         CanvasSnapshot(document: document ?? self.document, groups: committedGroups,
-                       detachedLinks: detachedLinks, ink: inkDrawing)
+                       detachedLinks: detachedLinks)
     }
     func complete(_ before: CanvasDocument, baseline: CanvasSnapshot? = nil, recordHistory: Bool = true) {
         let previous = baseline ?? snapshot(document: before)
@@ -351,11 +348,6 @@ import PencilKit
         else { history.enrichImport(from: before, to: document) }
         save(from: previous.document, previous.detachedLinks)
     }
-    func updateInk(_ drawing: PKDrawing, key: String? = nil) {
-        let before = snapshot()
-        inkDrawing = drawing
-        history.record(before: before, after: snapshot(), key: key)
-    }
     func undo() {
         resolveInteraction?()
         guard history.canUndo, editable(), let state = history.undo() else { return }
@@ -376,7 +368,6 @@ import PencilKit
         detachedLinks = state.detachedLinks
         elasticLink = nil
         groupingPreview = nil
-        inkDrawing = state.ink
         inspectedPlacement = nil
         inspectedGroup = nil
         refresh()

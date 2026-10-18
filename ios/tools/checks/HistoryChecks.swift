@@ -1,4 +1,3 @@
-import PencilKit
 import UIKit
 
 @main struct HistoryChecks {
@@ -27,29 +26,12 @@ import UIKit
         session.redo()
         precondition(session.document.placements[id] == nil)
 
-        let canvas = CanvasInkView(session: session)
-        canvas.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-        canvas.updateCamera()
-        session.render = { canvas.updateCamera() }
-        let path = PKStrokePath(controlPoints: [CGPoint(x: 30, y: 50), CGPoint(x: 70, y: 90)].enumerated().map {
-            PKStrokePoint(location: $0.element, timeOffset: Double($0.offset), size: CGSize(width: 3, height: 3), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
-        }, creationDate: Date())
-        canvas.drawing = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
-        canvas.delegate?.canvasViewDrawingDidChange?(canvas)
-        let ink = session.inkDrawing
         session.camera.zoom = 2
-        canvas.updateCamera()
-        session.undo()
-        precondition(session.inkDrawing.strokes.isEmpty && canvas.drawing.strokes.isEmpty)
-        precondition(session.camera.zoom == 2)
         session.undo()
         precondition(session.document.placements[id] != nil)
+        precondition(session.camera.zoom == 2)
         session.redo()
-        session.redo()
-        precondition(session.inkDrawing == ink && canvas.drawing.strokes.count == 1)
-        canvas.delegate?.canvasViewDrawingDidChange?(canvas)
-        session.undo()
-        precondition(session.inkDrawing.strokes.isEmpty)
+        precondition(session.document.placements[id] == nil)
 
         let gestureSession = CanvasFixtures.session().0
         let interaction = CanvasInteractionController(session: gestureSession)
@@ -105,6 +87,6 @@ import UIKit
         noOp.complete(valid)
         precondition(noOp.document == valid && !noOp.history.canUndo)
 
-        print("History checks passed: movement, resizing, deletion, branching, mixed ink/item history, camera independence and gesture cancellation.")
+        print("History checks passed: movement, resizing, deletion, branching, camera independence and gesture cancellation.")
     }
 }

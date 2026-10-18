@@ -37,17 +37,11 @@ struct CanvasScreen: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .toolbar {
-                    if session.isDrawing {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Done", systemImage: "checkmark") { session.isDrawing = false }
-                        }
-                    } else {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Settings", systemImage: "person.crop.circle") { onSettings() }
-                        }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Settings", systemImage: "person.crop.circle") { onSettings() }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button { session.isDrawing = false; showingImports = true } label: {
+                        Button { showingImports = true } label: {
                             Label("Imports (\(session.imports.items.filter { $0.state != "Ready" }.count))", systemImage: "square.and.arrow.down")
                         }
                     }
@@ -58,22 +52,12 @@ struct CanvasScreen: View {
                         Button("Redo", systemImage: "arrow.uturn.forward") { session.redo() }
                             .disabled(!session.history.canRedo)
                             .keyboardShortcut("z", modifiers: [.command, .shift])
-                        Button {
-                            searchExpanded = false
-                            session.resolveInteraction?()
-                            session.isDrawing.toggle()
-                        } label: {
-                            Label(session.isDrawing ? "Done drawing" : "Draw", systemImage: session.isDrawing ? "pencil.tip.crop.circle.fill" : "pencil.tip.crop.circle")
-                        }
-                        .tint(session.isDrawing ? .accentColor : .primary)
-                        .accessibilityHint("Shows or hides pens, eraser and colours")
                     }
                     DefaultToolbarItem(kind: .search, placement: .bottomBar)
                 }
                 .toolbarBackground(.hidden, for: .navigationBar, .bottomBar)
                 .onChange(of: searchExpanded) { _, expanded in
                     if expanded {
-                        session.isDrawing = false
                         session.resolveInteraction?()
                     } else {
                         session.searchQuery = ""
@@ -192,7 +176,6 @@ struct CanvasScreen: View {
             } message: { Text(session.error ?? "") }
             .onChange(of: selectedPhotos) { _, photos in
                 guard !photos.isEmpty else { return }
-                session.isDrawing = false
                 session.resolveInteraction?()
                 for (index, photo) in photos.enumerated() {
                     session.imports.importPhoto(title: "Imported photo \(index + 1)") {

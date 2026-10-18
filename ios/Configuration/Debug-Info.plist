@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CLERK_PUBLISHABLE_KEY</key>
-    <string>pk_test_REPLACE_WITH_CLERK_DEVELOPMENT_KEY</string>
+    <string>pk_test_bmV3LWNhaW1hbi0zMTAzLmNsZXJrLmFjY291bnRzLmRldiQ</string>
     <key>CONVEX_URL</key>
     <string>https://qualified-jellyfish-629.convex.cloud</string>
     <key>GARMS_API_BASE_URL</key>
