@@ -41,6 +41,11 @@ struct CanvasScreen: View {
                     ToolbarItem(placement: .topBarLeading) {
                         Button("Settings", systemImage: "person.crop.circle") { onSettings() }
                     }
+                    if session.imports.progress != nil {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            ProgressView().accessibilityLabel("Importing")
+                        }
+                    }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { showingImports = true } label: {
                             Label("Imports (\(session.imports.pendingCount))", systemImage: "square.and.arrow.down")
@@ -73,14 +78,6 @@ struct CanvasScreen: View {
                         .background(.thinMaterial, in: Capsule())
                         .padding(.top, 4)
                         .accessibilityAddTraits(.isStaticText)
-                }
-            }
-            .overlay {
-                if session.imports.progress != nil {
-                    ImportViewportProgress()
-                        .ignoresSafeArea()
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
                 }
             }
             .sheet(item: Binding(
@@ -431,42 +428,5 @@ struct CanvasGroupItemThumbnail: View {
             guard !Task.isCancelled else { return }
             thumbnail = image
         }
-    }
-}
-
-/// Resolve the device's corner geometry through SwiftUI, including at the trim seam.
-private struct ImportViewportProgress: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var started = Date()
-    private let lineWidth: CGFloat = 3
-
-    var body: some View {
-        Group {
-            if reduceMotion {
-                ConcentricRectangle()
-                    .stroke(.tint.opacity(0.7), lineWidth: lineWidth)
-            } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30)) { timeline in
-                    let phase = timeline.date.timeIntervalSince(started)
-                        .truncatingRemainder(dividingBy: 3.5) / 3.5
-                    let end = phase + 0.18
-                    ZStack {
-                        ConcentricRectangle()
-                            .trim(from: phase, to: min(end, 1))
-                            .stroke(.tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                        if end > 1 {
-                            ConcentricRectangle()
-                                .trim(from: 0, to: end - 1)
-                                .stroke(.tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                        }
-                    }
-                    .compositingGroup()
-                    .shadow(color: .accentColor.opacity(0.6), radius: 5)
-                }
-            }
-        }
-        // Inset only the stroke's centerline; its outside edge remains flush.
-        // ConcentricRectangle resolves the corresponding inset corner geometry.
-        .padding(lineWidth / 2)
     }
 }

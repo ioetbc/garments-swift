@@ -168,7 +168,8 @@ import OSLog
             let started = Date()
             log(id, "Starting processing attempt \(attempt.uuidString). Waiting for product artwork.")
             do {
-                let source: ImportedImageDownload.Artwork
+                // nil when resolving a Product Awaiting match: it keeps its Screenshot's Cutout.
+                let source: ImportedImageDownload.Artwork?
                 if let checkpoint = items[index].checkpoint, let data = session.importedAssets.data(for: checkpoint.asset) {
                     source = .init(data: data, aspect: checkpoint.aspect)
                     log(id, "Resuming background removal from the saved original (\(data.count) bytes).")
@@ -181,21 +182,38 @@ import OSLog
                     let data = try await load()
                     try Task.checkCancellation()
                     guard valid(id, attempt, placement) else { continue }
-                    source = try await ImportedImageDownload.prepare(data)
+                    let photo = try await ImportedImageDownload.prepare(data)
+                    source = photo
                     try Task.checkCancellation()
                     guard valid(id, attempt, placement),
                           let current = items.firstIndex(where: { $0.id == id }) else { continue }
                     if placement == nil {
-                        placement = session.insertImport(items[current].record, artwork: source)
+                        placement = session.insertImport(items[current].record, artwork: photo)
                         items[current].placementID = placement
                     }
                     guard let placement,
-                          let asset = session.installImportOriginal(placement, title: nil, price: nil, artwork: source) else {
+                          let asset = session.installImportOriginal(placement, title: nil, price: nil, artwork: photo) else {
                         throw ImportedImageDownload.ImageError.invalid
                     }
-                    items[current].checkpoint = Checkpoint(asset: asset, aspect: source.aspect)
+                    items[current].checkpoint = Checkpoint(asset: asset, aspect: photo.aspect)
                     items[current].photoLoader = nil
-                    log(id, "Photo decoded and original installed on canvas (\(source.data.count) PNG bytes).")
+                    log(id, "Photo decoded and original installed on canvas (\(photo.data.count) PNG bytes).")
+                } else if items[index].resolving != nil, let placement {
+                    items[index].checkpoint = nil
+                    items[index].stage = .fetching
+                    log(id, "Fetching the listing for this Screenshot via the imports:product action → Firecrawl.")
+                    let result = try await fetch(url)
+                    try Task.checkCancellation()
+                    guard valid(id, attempt, placement), let current = items.firstIndex(where: { $0.id == id }) else { continue }
+                    for line in result.diagnostics ?? [] { log(id, "Server: " + line) }
+                    // The Screenshot's Cutout stays on the Canvas, so the Sticker doesn't jump; the listing's images become Photos.
+                    var seenImages: Set<String> = []
+                    items[current].pendingImages = (result.imageURLs ?? result.imageURL.map { [$0] } ?? []).filter { seenImages.insert($0).inserted }
+                    guard session.updateImport(placement, title: result.title, price: result.price, artwork: nil) != nil else {
+                        throw ImportedImageDownload.ImageError.invalid
+                    }
+                    source = nil
+                    log(id, "Listing details saved. Title: \(result.title ?? "missing"). Keeping the Screenshot's Cutout.")
                 } else {
                     items[index].checkpoint = nil
                     items[index].stage = .fetching
@@ -211,23 +229,24 @@ import OSLog
                     items[current].pendingImages = (result.imageURLs ?? []).filter { seenImages.insert($0).inserted }
                     items[current].stage = .downloading
                     log(id, "Downloading image from \(URL(string: address)?.host ?? "unknown host") and decoding to a PNG bounded to 2,048 pixels.")
-                    source = try await image(address)
+                    let artwork = try await image(address)
+                    source = artwork
                     try Task.checkCancellation()
                     guard valid(id, attempt, placement) else { continue }
                     guard let current = items.firstIndex(where: { $0.id == id }) else { continue }
                     if placement == nil {
                         var record = items[current].record
                         record.suggestedTitle = result.title ?? record.suggestedTitle
-                        placement = session.insertImport(record, artwork: source)
+                        placement = session.insertImport(record, artwork: artwork)
                         items[current].placementID = placement
                     }
                     guard let placement,
-                          let asset = session.installImportOriginal(placement, title: result.title, price: result.price, artwork: source) else {
+                          let asset = session.installImportOriginal(placement, title: result.title, price: result.price, artwork: artwork) else {
                         throw ImportedImageDownload.ImageError.invalid
                     }
                     guard let current = items.firstIndex(where: { $0.id == id }) else { continue }
-                    items[current].checkpoint = Checkpoint(asset: asset, aspect: source.aspect)
-                    log(id, "Image downloaded, decoded and installed on canvas (\(source.data.count) PNG bytes; aspect \(source.aspect)).")
+                    items[current].checkpoint = Checkpoint(asset: asset, aspect: artwork.aspect)
+                    log(id, "Image downloaded, decoded and installed on canvas (\(artwork.data.count) PNG bytes; aspect \(artwork.aspect)).")
                 }
                 guard let placement, valid(id, attempt, placement) else { continue }
                 while let current = items.firstIndex(where: { $0.id == id }), let address = items[current].pendingImages.first {
@@ -249,36 +268,39 @@ import OSLog
                 }
                 try Task.checkCancellation()
                 guard valid(id, attempt, placement), let current = items.firstIndex(where: { $0.id == id }) else { continue }
-                items[current].stage = .removingBackground
-                log(id, "Removing background with Vision foreground-instance segmentation.")
-                let cutoutStarted = Date()
-                let extracted: ImportedImageDownload.Artwork?
-                var warning: String?
-                do {
-                    if let cutout {
-                        extracted = try await cutout(source)
-                    } else {
-                        extracted = try await ForegroundCutoutProcessor.extract(source) { [weak self] line in
-                            await self?.logCutoutDiagnostic(line, id: id, attempt: attempt, placement: placement)
+                if let source {
+                    items[current].stage = .removingBackground
+                    log(id, "Removing background with Vision foreground-instance segmentation.")
+                    let cutoutStarted = Date()
+                    let extracted: ImportedImageDownload.Artwork?
+                    var warning: String?
+                    do {
+                        if let cutout {
+                            extracted = try await cutout(source)
+                        } else {
+                            extracted = try await ForegroundCutoutProcessor.extract(source) { [weak self] line in
+                                await self?.logCutoutDiagnostic(line, id: id, attempt: attempt, placement: placement)
+                            }
                         }
+                        if extracted == nil { warning = "Background removal returned no usable cutout. No foreground image was produced." }
                     }
-                    if extracted == nil { warning = "Background removal returned no usable cutout. No foreground image was produced." }
+                    catch is CancellationError { throw CancellationError() }
+                    catch { extracted = nil; warning = ImportDiagnostics.describe(error) }
+                    try Task.checkCancellation()
+                    guard valid(id, attempt, placement) else { continue }
+                    let installed = extracted.flatMap { session.applyImportCutout(placement, artwork: $0) }
+                    guard let current = items.firstIndex(where: { $0.id == id }) else { continue }
+                    if installed == nil {
+                        let reason = warning ?? "A cutout was generated but could not be installed on the canvas."
+                        items[current].note = "Background kept: " + reason
+                        log(id, "Background removal finished after \(String(format: "%.2f", Date().timeIntervalSince(cutoutStarted)))s. Original kept. " + reason, warning: true)
+                    } else {
+                        log(id, "Background removed and cutout installed on canvas in \(String(format: "%.2f", Date().timeIntervalSince(cutoutStarted)))s (\(extracted?.data.count ?? 0) PNG bytes).")
+                    }
                 }
-                catch is CancellationError { throw CancellationError() }
-                catch { extracted = nil; warning = ImportDiagnostics.describe(error) }
-                try Task.checkCancellation()
-                guard valid(id, attempt, placement) else { continue }
-                let installed = extracted.flatMap { session.applyImportCutout(placement, artwork: $0) }
                 guard let current = items.firstIndex(where: { $0.id == id }) else { continue }
                 items[current].state = "Ready"
                 items[current].stage = nil
-                if installed == nil {
-                    let reason = warning ?? "A cutout was generated but could not be installed on the canvas."
-                    items[current].note = "Background kept: " + reason
-                    log(id, "Background removal finished after \(String(format: "%.2f", Date().timeIntervalSince(cutoutStarted)))s. Original kept. " + reason, warning: true)
-                } else {
-                    log(id, "Background removed and cutout installed on canvas in \(String(format: "%.2f", Date().timeIntervalSince(cutoutStarted)))s (\(extracted?.data.count ?? 0) PNG bytes).")
-                }
                 log(id, "Import ready in \(String(format: "%.2f", Date().timeIntervalSince(started)))s.")
                 if let resolving = items[current].resolving {
                     session.resolveMatch(resolving.product, url: url, screenshot: resolving.screenshot)

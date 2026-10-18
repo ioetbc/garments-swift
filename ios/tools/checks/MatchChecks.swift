@@ -101,11 +101,10 @@ import UIKit
             let done = session.document.products[product.id]!
             precondition(fetched == [jacket.url] && downloads == ["https://cdn.example/1.jpg", "https://cdn.example/2.jpg"])
             precondition(done.product_url == jacket.url && done.title == "Red Jacket" && done.price == Price(amount: 4500, currency: "GBP"))
-            precondition(done.aspect == 1.5 && session.importedAssets.data(for: done.originalAsset!) == listing.data)
-            precondition(done.galleryAssets.count == 2 && done.galleryAssets[0] == product.originalAsset)
-            let moved = session.document.placements[sticker.id]!
-            precondition(moved.center == sticker.center && moved.z == sticker.z && max(moved.width, moved.height) == max(sticker.width, sticker.height))
-            precondition(abs(moved.width / moved.height - 1.5) < 0.0001)
+            // The Screenshot's art stays; the listing's images become Photos after it.
+            precondition(done.asset == product.asset && done.originalAsset == product.originalAsset && done.aspect == product.aspect)
+            precondition(done.galleryAssets.count == 3 && done.galleryAssets[0] == product.originalAsset)
+            precondition(session.document.placements[sticker.id] == sticker)
             precondition(session.document.namedGroups!.first { $0.id == group }!.members.contains(sticker.id))
             precondition(coordinator.awaitingMatch.isEmpty && !coordinator.isLoadingMatch(product.id))
             session.select(sticker.id, showDetails: true)
@@ -158,18 +157,17 @@ import UIKit
             try await waitFor { session.document.products[product.id]?.match == nil }
             precondition(session.document.products[product.id]?.product_url == jacket.url && coordinator.pendingCount == 0)
         }
-        // Every Sticker of the Product takes the listing's shape, not only the one the import ran through.
+        // No Sticker of the Product changes shape, not only the one the import ran through.
         do {
             let (session, coordinator) = imports(search: { _ in nil }, fetch: { url in
                 .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg")
             })
             let product = try await importScreenshot(coordinator, session)
             let second = session.placeSticker(of: product.id)!
+            let before = session.document.placements.filter { $0.value.productID == product.id }
             coordinator.confirm(product.id, url: jacket.url)
             try await waitFor { session.document.products[product.id]?.match == nil }
-            for sticker in session.document.placements.values where sticker.productID == product.id {
-                precondition(abs(sticker.width / sticker.height - 1.5) < 0.0001)
-            }
+            precondition(session.document.placements.filter { $0.value.productID == product.id } == before)
             precondition(session.document.placements[second] != nil)
         }
         // Confirming a link another Product already has links the Sticker to that Product, where it stands.
