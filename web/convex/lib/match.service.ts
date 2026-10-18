@@ -4,7 +4,6 @@ import type { ActionCtx } from "../_generated/server";
 import type { Candidate } from "../validators";
 import { Auth } from "./auth";
 import { InvalidInput, NotSignedIn, SearchFailed, SearchLimited } from "./errors";
-import { MAX_CANDIDATES } from "./product.service";
 import { ListingSearch, type SearchResult } from "./listing.client";
 import { ScreenshotReader } from "./screenshot.client";
 
@@ -26,22 +25,22 @@ export class SearchQuota extends Context.Service<SearchQuota, {
   }));
 }
 
-/** Search results as Candidate matches, in the search engine's order, without social and other non-shop sites. */
-export function candidatesFrom(results: ReadonlyArray<SearchResult>): Array<Candidate> {
-  return results.flatMap(({ url, title }) => {
-    const host = URL.parse(url)?.hostname.toLowerCase();
-    return host && !blocked(host) ? [{ url, ...(title?.trim() ? { title: title.trim() } : {}), domain: host.replace(/^www\./, "") }] : [];
-  }).slice(0, MAX_CANDIDATES);
+/** A search result as a Candidate match, unless it is a social or other non-shop site. */
+export function candidateFrom(result: SearchResult | undefined): Candidate | null {
+  const host = result && URL.parse(result.url)?.hostname.toLowerCase();
+  if (!result || !host || blocked(host)) return null;
+  const title = result.title?.trim();
+  return { url: result.url, ...(title ? { title } : {}), domain: host.replace(/^www\./, "") };
 }
 
 /** Finding the listing a Screenshot came from. */
 export class MatchService extends Context.Service<MatchService, {
   /**
-   * Up to five Candidate matches for a base64-encoded JPEG Screenshot, searched from the
+   * The Candidate match for a base64-encoded JPEG Screenshot, or null, searched from the
    * caller's region (ISO 3166 alpha-2) when given.
    * Costs one vision model call and one web search, counted against the caller's daily limit; no page is scraped.
    */
-  search(image: string, region?: string): Effect.Effect<Array<Candidate>, NotSignedIn | InvalidInput | SearchLimited | SearchFailed>;
+  search(image: string, region?: string): Effect.Effect<Candidate | null, NotSignedIn | InvalidInput | SearchLimited | SearchFailed>;
 }>()("garms/MatchService") {
   static readonly layer = Layer.effect(MatchService, Effect.gen(function* () {
     const auth = yield* Auth;
@@ -60,12 +59,12 @@ export class MatchService extends Context.Service<MatchService, {
       const listing = yield* reader.read(image);
       const query = listing.title && (listing.domain ? `${listing.title} site:${listing.domain}` : listing.title);
       yield* log("read", { ...listing, query, ms: Date.now() - started, imageLength: image.length });
-      if (!query) return [];
+      if (!query) return null;
       started = Date.now();
-      const results = yield* listings.search(query, region);
-      const candidates = candidatesFrom(results);
-      yield* log("searched", { results: results.map((r) => r.url), candidates: candidates.map((c) => c.url), region, ms: Date.now() - started });
-      return candidates;
+      const result = yield* listings.search(query, region);
+      const candidate = candidateFrom(result);
+      yield* log("searched", { result: result?.url, candidate: candidate?.url, region, ms: Date.now() - started });
+      return candidate;
     });
 
     return MatchService.of({ search });

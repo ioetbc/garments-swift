@@ -36,8 +36,8 @@ describe("searching for a Screenshot's listing", () => {
     const fetch = stub({ shop: "SSENSE", domain: "ssense.com", title: "Lemaire Check Shirt" }, [
       { url: "https://www.ssense.com/en-us/men/product/lemaire/check-shirt/123", title: "Lemaire Check Shirt" },
     ]);
-    const candidates = await convexTest(schema, modules).withIdentity(alice).action(api.matches.search, { image });
-    expect(candidates).toEqual([{ url: "https://www.ssense.com/en-us/men/product/lemaire/check-shirt/123", title: "Lemaire Check Shirt", domain: "ssense.com" }]);
+    const candidate = await convexTest(schema, modules).withIdentity(alice).action(api.matches.search, { image });
+    expect(candidate).toEqual({ url: "https://www.ssense.com/en-us/men/product/lemaire/check-shirt/123", title: "Lemaire Check Shirt", domain: "ssense.com" });
     const [gateway, firecrawl] = fetch.mock.calls;
     expect(gateway[0]).toBe("https://ai-gateway.vercel.sh/v1/chat/completions");
     expect(gateway[1]!.headers).toMatchObject({ Authorization: "Bearer gateway-key" });
@@ -54,20 +54,21 @@ describe("searching for a Screenshot's listing", () => {
 
   test("a Screenshot with no product title finds nothing, without searching", async () => {
     const fetch = stub({ shop: "Vinted", domain: "vinted.co.uk", title: null });
-    expect(await convexTest(schema, modules).withIdentity(alice).action(api.matches.search, { image })).toEqual([]);
+    expect(await convexTest(schema, modules).withIdentity(alice).action(api.matches.search, { image })).toBeNull();
     expect(query(fetch)).toEqual([]);
   });
 
-  test("drops non-shop pages but keeps resellers, at most five", async () => {
-    const page = (host: string) => ({ url: `https://${host}/item` });
-    stub({ title: "Coat" }, [
-      page("www.pinterest.co.uk"), page("old.reddit.com"), page("www.google.com"), page("www.instagram.com"),
-      page("www.tiktok.com"), page("x.com"), page("twitter.com"), page("m.facebook.com"), page("blog.tumblr.com"), page("en.wikipedia.org"),
-      page("www.depop.com"), page("www.vinted.co.uk"),
-      page("a.example"), page("b.example"), page("c.example"), page("d.example"),
-    ]);
-    const candidates = await convexTest(schema, modules).withIdentity(alice).action(api.matches.search, { image });
-    expect(candidates.map((c) => c.domain)).toEqual(["depop.com", "vinted.co.uk", "a.example", "b.example", "c.example"]);
+  test("a non-shop top result finds nothing, but resellers are kept", async () => {
+    const t = convexTest(schema, modules).withIdentity(alice);
+    for (const host of ["www.pinterest.co.uk", "old.reddit.com", "www.google.com", "www.instagram.com", "www.tiktok.com",
+      "x.com", "twitter.com", "m.facebook.com", "blog.tumblr.com", "en.wikipedia.org"]) {
+      stub({ title: "Coat" }, [{ url: `https://${host}/item` }]);
+      expect(await t.action(api.matches.search, { image })).toBeNull();
+    }
+    for (const host of ["www.depop.com", "www.vinted.co.uk"]) {
+      stub({ title: "Coat" }, [{ url: `https://${host}/item` }]);
+      expect((await t.action(api.matches.search, { image }))?.domain).toBe(host.replace("www.", ""));
+    }
   });
 
   test("searches from the User's region when given", async () => {

@@ -6,12 +6,12 @@ import { UserService } from "./lib/user.service";
 import { candidate } from "./validators";
 
 /**
- * Up to five Candidate matches for a base64-encoded JPEG Screenshot, searched from the
+ * The listing a base64-encoded JPEG Screenshot most likely shows, or null, searched from the
  * User's region (ISO 3166 alpha-2) when given. Signed-in Users only, within a daily limit.
  */
 export const search = action({
   args: { image: v.string(), region: v.optional(v.string()) },
-  returns: v.array(candidate),
+  returns: v.union(candidate, v.null()),
   handler: (ctx, args) => runAction(ctx, MatchService.use((matches) => matches.search(args.image, args.region))),
 });
 

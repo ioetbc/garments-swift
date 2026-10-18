@@ -36,7 +36,7 @@ export class ScreenshotReader extends Context.Service<ScreenshotReader, {
 }>()("garms/ScreenshotReader") {
   static readonly layer = Layer.sync(ScreenshotReader, () => ScreenshotReader.of({
     read: (image) => Effect.tryPromise({
-      try: async (): Promise<{ listing: ScreenshotListing } | { failure: unknown }> => {
+      try: async () => {
         const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY ?? ""}` },
@@ -49,16 +49,15 @@ export class ScreenshotReader extends Context.Service<ScreenshotReader, {
             response_format: { type: "json_schema", json_schema: { name: "listing", strict: true, schema: SCHEMA } },
           }),
         });
-        if (!response.ok) return { failure: `AI Gateway HTTP ${response.status}: ${(await response.text()).slice(0, 500)}` };
+        if (!response.ok) throw new Error(`AI Gateway HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
         const body = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
         const content = body.choices?.[0]?.message?.content;
-        if (!content) return { failure: "AI Gateway returned no content" };
+        if (!content) throw new Error("AI Gateway returned no content");
         // The strict schema guarantees the shape.
-        return { listing: JSON.parse(content) as ScreenshotListing };
+        return JSON.parse(content) as ScreenshotListing;
       },
       catch: (cause) => new SearchFailed({ cause }),
     }).pipe(
-      Effect.flatMap((result) => "listing" in result ? Effect.succeed(result.listing) : Effect.fail(new SearchFailed({ cause: result.failure }))),
       // The User only sees a generic message; the logs keep the reason.
       Effect.tapError((error) => Effect.sync(() => console.error("Screenshot search: reading the Screenshot failed", error.cause))),
     ),

@@ -20,7 +20,6 @@ export const candidate = v.object({
   url: v.string(),
   title: v.optional(v.string()),
   domain: v.string(),
-  thumbnail: v.optional(v.string()),
 });
 
 /** Present exactly while a Product imported from a Screenshot is Awaiting match. */
@@ -29,7 +28,8 @@ export const match = v.object({
     v.literal("searching"), v.literal("found"), v.literal("none"),
     v.literal("failed"), v.literal("loadFailed"),
   ),
-  candidates: v.array(candidate),
+  /** The page the search found, kept so a failed import of it can be retried. */
+  candidate: v.optional(candidate),
 });
 
 const point = v.object({ x: v.number(), y: v.number() });

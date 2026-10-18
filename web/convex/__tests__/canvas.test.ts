@@ -173,13 +173,11 @@ describe("change sets", () => {
     expect((await t.query(api.canvases.load, { canvas })).products).toEqual([]);
   });
 
-  test("a Product Awaiting match keeps its Candidate matches across save and reload", async () => {
+  test("a Product Awaiting match keeps its Candidate match across save and reload", async () => {
     const t = convexTest(schema, modules).withIdentity(alice);
     const canvas = await t.mutation(api.canvases.start, {});
-    const shot = product("shot", { sourceUrl: "", match: { status: "found", candidates: [
-      { url: "https://shop.example/jacket", title: "Jacket", domain: "shop.example", thumbnail: "https://cdn.example/j.jpg" },
-      { url: "https://resale.example/jacket", domain: "resale.example" },
-    ] } });
+    const shot = product("shot", { sourceUrl: "", match: { status: "loadFailed",
+      candidate: { url: "https://shop.example/jacket", title: "Jacket", domain: "shop.example" } } });
     await t.mutation(api.canvases.apply, { canvas, changes: { ...emptyChanges(), products: [shot] } });
     expect((await t.query(api.canvases.load, { canvas })).products).toEqual([shot]);
   });
@@ -189,10 +187,10 @@ describe("change sets", () => {
     const canvas = await t.mutation(api.canvases.start, {});
     const candidate = { url: "https://shop.example/a", domain: "shop.example" };
     const malformed: Record<string, unknown>[] = [
-      { match: { status: "maybe", candidates: [] } },
-      { match: { status: "found" } },
-      { match: { status: "found", candidates: [{ url: "https://shop.example/a" }] } },
-      { match: { status: "found", candidates: Array(6).fill(candidate) } },
+      { match: { status: "maybe" } },
+      { match: { candidate } },
+      { match: { status: "found", candidate: { url: "https://shop.example/a" } } },
+      { match: { status: "found", candidates: [candidate] } },
     ];
     for (const fields of malformed) {
       await expect(t.mutation(api.canvases.apply, { canvas, changes: { ...emptyChanges(), products: [{ ...product("p"), ...fields } as never] } }))

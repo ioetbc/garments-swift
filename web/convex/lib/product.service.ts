@@ -8,9 +8,6 @@ import { ProductRepository } from "./product.repository";
 import { StickerRepository } from "./sticker.repository";
 import { UserService } from "./user.service";
 
-/** The most Candidate matches a search returns or a Product keeps. */
-export const MAX_CANDIDATES = 5;
-
 /** Rejects values the validators cannot express: integer minor units and ISO 4217 codes. */
 export const validateProduct = Effect.fnUntraced(function* (p: Product) {
   if (p.price && (!Number.isSafeInteger(p.price.amount) || p.price.amount < 0 || !/^[A-Z]{3}$/.test(p.price.currency))) {
@@ -18,7 +15,6 @@ export const validateProduct = Effect.fnUntraced(function* (p: Product) {
   }
   if (!Number.isFinite(p.aspect) || p.aspect <= 0) return yield* new InvalidInput({ message: "Invalid aspect ratio." });
   if (p.availability && !Number.isFinite(p.availability.checkedAt)) return yield* new InvalidInput({ message: "Invalid availability time." });
-  if (p.match && p.match.candidates.length > MAX_CANDIDATES) return yield* new InvalidInput({ message: `A Product keeps at most ${MAX_CANDIDATES} Candidate matches.` });
 });
 
 /** Product rules that span its Stickers and files. */
