@@ -157,12 +157,55 @@ function productGallery(url: string, document: Document, primary: string | undef
   return [...images];
 }
 
+/** Converts a listing's major-unit amount, as pages write it, to integer minor units. */
+function toPrice(amount: unknown, currency: unknown): { amount: number; currency: string } | null {
+  if (typeof currency !== "string" || !/^[a-z]{3}$/i.test(currency.trim())) return null;
+  const code = currency.trim().toUpperCase();
+  const major = typeof amount === "number" ? amount : typeof amount === "string" ? Number(amount.replace(/[^\d.]/g, "")) : NaN;
+  if (!Number.isFinite(major) || major < 0 || typeof amount === "string" && !/\d/.test(amount)) return null;
+  let digits: number;
+  try { digits = new Intl.NumberFormat("en", { style: "currency", currency: code }).resolvedOptions().maximumFractionDigits ?? 2; }
+  catch { return null; }
+  return { amount: Math.round(major * 10 ** digits), currency: code };
+}
+
+// Structured data first, then price meta tags; the page is the only source of a Price.
+function listingPrice(document: Document): { amount: number; currency: string } | null {
+  if (!document.rawHtml) return null;
+  const $ = load(document.rawHtml);
+  let price: { amount: number; currency: string } | null = null;
+  $('script[type="application/ld+json"]').each((_, element) => {
+    if (price) return;
+    try {
+      const visit = (value: unknown, depth = 0): void => {
+        if (price || depth > 60 || value === null || typeof value !== "object") return;
+        if (Array.isArray(value)) { for (const entry of value) visit(entry, depth + 1); return; }
+        const node = value as Record<string, unknown>;
+        const types = Array.isArray(node["@type"]) ? node["@type"] : [node["@type"]];
+        if (types.includes("Product")) {
+          for (const offer of Array.isArray(node.offers) ? node.offers : [node.offers]) {
+            if (!offer || typeof offer !== "object") continue;
+            const o = offer as Record<string, unknown>;
+            price ??= toPrice(o.price ?? o.lowPrice, o.priceCurrency);
+          }
+        }
+        for (const entry of Object.values(node)) visit(entry, depth + 1);
+      };
+      visit(JSON.parse($(element).text()));
+    } catch { /* Malformed structured data must not fail an otherwise usable import. */ }
+  });
+  const meta = (key: string) => $(`meta[property="${key}"], meta[name="${key}"]`).attr("content");
+  for (const prefix of ["og", "product"]) price ??= toPrice(meta(`${prefix}:price:amount`), meta(`${prefix}:price:currency`));
+  return price;
+}
+
 function extractImport(url: string, document: Document) {
   const metadata = document.metadata;
   const title = [metadata?.ogTitle, metadata?.title].find(v => typeof v === "string" && v.trim());
   const image = selectImportImage(url, document);
   const imageURLs = productGallery(url, document, image?.url);
-  return { product: { url, title: title?.trim().slice(0, 500) ?? null, imageURL: imageURLs[0] ?? null, imageURLs }, imageSource: imageURLs[0] === image?.url ? image?.source : (imageURLs.length ? "product gallery" : undefined) };
+  const price = listingPrice(document);
+  return { product: { url, title: title?.trim().slice(0, 500) ?? null, imageURL: imageURLs[0] ?? null, imageURLs, price }, imageSource: imageURLs[0] === image?.url ? image?.source : (imageURLs.length ? "product gallery" : undefined) };
 }
 
 export function normalizeImport(url: string, document: Document) {

@@ -6,8 +6,6 @@
     <string>pk_test_bmV3LWNhaW1hbi0zMTAzLmNsZXJrLmFjY291bnRzLmRldiQ</string>
     <key>CONVEX_URL</key>
     <string>https://qualified-jellyfish-629.convex.cloud</string>
-    <key>GARMS_API_BASE_URL</key>
-    <string>https://1411-2a06-61c1-c32-0-c9f5-5916-7c6b-aa6c.ngrok-free.app</string>
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>

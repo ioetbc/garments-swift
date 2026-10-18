@@ -172,6 +172,34 @@ describe("change sets", () => {
     }
     expect((await t.query(api.canvases.load, { canvas })).products).toEqual([]);
   });
+
+  test("a Product Awaiting match keeps its Candidate matches across save and reload", async () => {
+    const t = convexTest(schema, modules).withIdentity(alice);
+    const canvas = await t.mutation(api.canvases.start, {});
+    const shot = product("shot", { sourceUrl: "", match: { status: "found", candidates: [
+      { url: "https://shop.example/jacket", title: "Jacket", domain: "shop.example", thumbnail: "https://cdn.example/j.jpg" },
+      { url: "https://resale.example/jacket", domain: "resale.example" },
+    ] } });
+    await t.mutation(api.canvases.apply, { canvas, changes: { ...emptyChanges(), products: [shot] } });
+    expect((await t.query(api.canvases.load, { canvas })).products).toEqual([shot]);
+  });
+
+  test("malformed match states are rejected", async () => {
+    const t = convexTest(schema, modules).withIdentity(alice);
+    const canvas = await t.mutation(api.canvases.start, {});
+    const candidate = { url: "https://shop.example/a", domain: "shop.example" };
+    const malformed: Record<string, unknown>[] = [
+      { match: { status: "maybe", candidates: [] } },
+      { match: { status: "found" } },
+      { match: { status: "found", candidates: [{ url: "https://shop.example/a" }] } },
+      { match: { status: "found", candidates: Array(6).fill(candidate) } },
+    ];
+    for (const fields of malformed) {
+      await expect(t.mutation(api.canvases.apply, { canvas, changes: { ...emptyChanges(), products: [{ ...product("p"), ...fields } as never] } }))
+        .rejects.toThrow();
+    }
+    expect((await t.query(api.canvases.load, { canvas })).products).toEqual([]);
+  });
 });
 
 describe("isolation", () => {

@@ -41,8 +41,10 @@ extension CanvasChangeSet: ConvexEncodable {}
             // Held weakly between attempts, so teardown ends the loop.
             var canvas: String?
             while canvas == nil, self != nil {
-                do { canvas = try await client.mutation("canvases:start") }
-                catch {
+                // Calling before Clerk's token reaches Convex is rejected as Not signed in, so wait for it.
+                if self?.authenticated == true, let started: String = try? await client.mutation("canvases:start") {
+                    canvas = started
+                } else {
                     try? await Task.sleep(for: .seconds(3))
                     // Launching offline leaves Convex unauthenticated; retry from Clerk's cached session.
                     if self?.authenticated == false { _ = await client.loginFromCache() }
@@ -100,5 +102,11 @@ extension CanvasChangeSet: ConvexEncodable {}
                 completion(nil)
             } catch { completion(error) }
         }
+    }
+
+    func findCandidates(_ jpeg: Data) async throws -> [Product.Match.Candidate] {
+        var args: [String: ConvexEncodable?] = ["image": jpeg.base64EncodedString()]
+        if let region = Locale.current.region?.identifier, region.count == 2 { args["region"] = region }
+        return try await client.action("matches:search", with: args)
     }
 }

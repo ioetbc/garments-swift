@@ -4,7 +4,9 @@ import { group, product, sticker, viewport } from "./validators";
 
 export default defineSchema({
   // tokenIdentifier is provider-agnostic, so Clerk drops in without schema changes.
-  users: defineTable({ tokenIdentifier: v.string() }).index("by_token", ["tokenIdentifier"]),
+  // `searches` counts today's Screenshot searches, for the per-User limit.
+  users: defineTable({ tokenIdentifier: v.string(), searches: v.optional(v.object({ day: v.number(), count: v.number() })) })
+    .index("by_token", ["tokenIdentifier"]),
   canvases: defineTable({ owner: v.id("users"), viewport }).index("by_owner", ["owner"]),
   // Rows are addressed by client-generated keys so the device can create them without a round trip.
   products: defineTable({ owner: v.id("users"), ...product.fields })

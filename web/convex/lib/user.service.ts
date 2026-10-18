@@ -12,6 +12,9 @@ import { UserRepository } from "./user.repository";
 
 // Rows per kind per transaction, well inside Convex's per-transaction limits.
 const BATCH = 200;
+// ponytail: fixed UTC-day window; a sliding window if Users hit it at midnight.
+const SEARCHES_PER_DAY = 30;
+const DAY = 24 * 60 * 60 * 1000;
 
 /** A User and their Canvas. */
 export type Owner = { readonly user: Id<"users">; readonly canvas: Id<"canvases"> };
@@ -29,6 +32,8 @@ export class UserService extends Context.Service<UserService, {
    * Returns true once the User is gone; safe to repeat after a failure part way.
    */
   deleteBatch(token: string): Effect.Effect<boolean>;
+  /** Counts one Screenshot search against the User's daily limit. False once the limit is used up. */
+  claimSearch(token: string): Effect.Effect<boolean>;
 }>()("garms/UserService") {
   static readonly layer = Layer.effect(UserService, Effect.gen(function* () {
     const auth = yield* Auth;
@@ -71,11 +76,23 @@ export class UserService extends Context.Service<UserService, {
       return true;
     });
 
+    const claimSearch = Effect.fn("UserService.claimSearch")(function* (token: string) {
+      yield* ensure(token);
+      const user = yield* users.byToken(token);
+      if (!user) return false;
+      const day = Math.floor(Date.now() / DAY);
+      const count = user.searches?.day === day ? user.searches.count : 0;
+      if (count >= SEARCHES_PER_DAY) return false;
+      yield* users.setSearches(user._id, { day, count: count + 1 });
+      return true;
+    });
+
     return UserService.of({
       caller: Effect.flatMap(auth.token, (token) => users.byToken(token)),
       ensureCaller: Effect.flatMap(auth.token, ensure),
       ensure,
       deleteBatch,
+      claimSearch,
     });
   }));
 }

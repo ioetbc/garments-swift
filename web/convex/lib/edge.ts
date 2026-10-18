@@ -12,12 +12,15 @@ import { FileRepository } from "./file.repository";
 import { FileService } from "./file.service";
 import { GroupRepository } from "./group.repository";
 import { LinkRepository } from "./link.repository";
+import { MatchService, SearchQuota } from "./match.service";
 import { ProductRepository } from "./product.repository";
 import { ProductService } from "./product.service";
 import { SeedService } from "./seed.service";
 import { StickerRepository } from "./sticker.repository";
 import { UserRepository } from "./user.repository";
 import { UserService } from "./user.service";
+import { ListingSearch } from "./listing.client";
+import { ScreenshotReader } from "./screenshot.client";
 
 /** The services a handler may call. */
 type Services = UserService | CanvasService | ProductService | FileService | SeedService;
@@ -47,5 +50,7 @@ export const runMutation = <A>(ctx: MutationCtx, effect: Effect.Effect<A, GarmsE
   run(services.pipe(Layer.provide(Layer.merge(ConvexContext.mutation(ctx), Auth.layer(ctx)))), effect);
 
 /** Runs an action's program once. Actions have no database; they reach it through mutations. */
-export const runAction = <A>(ctx: ActionCtx, effect: Effect.Effect<A, GarmsError, AccountService>) =>
-  run(AccountService.layer.pipe(Layer.provide(Layer.mergeAll(Auth.layer(ctx), DeletionBatches.layer(ctx), ClerkClient.layer))), effect);
+export const runAction = <A>(ctx: ActionCtx, effect: Effect.Effect<A, GarmsError, AccountService | MatchService>) =>
+  run(Layer.merge(AccountService.layer, MatchService.layer).pipe(Layer.provide(Layer.mergeAll(
+    Auth.layer(ctx), DeletionBatches.layer(ctx), ClerkClient.layer, SearchQuota.layer(ctx), ScreenshotReader.layer, ListingSearch.layer,
+  ))), effect);

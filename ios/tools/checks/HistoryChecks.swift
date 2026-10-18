@@ -53,7 +53,7 @@ import UIKit
         let imported = CanvasFixtures.session(laidOut: true).0
         let importedID = imported.insertImport(SharedImport(url: "https://shop.example/item"),
             artwork: .init(data: Data([1]), aspect: 1))!
-        imported.updateImport(importedID, title: "Enriched", artwork: .init(data: Data([2]), aspect: 0.5))
+        imported.updateImport(importedID, title: "Enriched", price: nil, artwork: .init(data: Data([2]), aspect: 0.5))
         let productID = imported.document.placements[importedID]!.productID
         let enriched = imported.document.products[productID]!
         imported.undo()

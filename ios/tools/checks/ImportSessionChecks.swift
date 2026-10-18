@@ -58,7 +58,7 @@ import UIKit
         try await Task.sleep(for: .milliseconds(80))
         precondition(store.image(key) != nil)
         session.document.placements[placementID]?.center = WorldPoint(x: 750, y: 600)
-        session.updateImport(placementID, title: "Updated", artwork: .init(data: data, aspect: 0.5))
+        session.updateImport(placementID, title: "Updated", price: nil, artwork: .init(data: data, aspect: 0.5))
         let updated = session.document.placements[placementID]!
         precondition(updated.center == WorldPoint(x: 750, y: 600))
         precondition(max(updated.width, updated.height) == max(placement.width, placement.height))
@@ -268,8 +268,8 @@ import UIKit
             image: { _ in preconditionFailure("Photos must not download listing images") },
             cutout: { _ in nil })
         var photoLoads = 0
-        photos.importPhoto(title: "Jacket") { photoLoads += 1; return png }
-        photos.importPhoto(title: "Shoes") { photoLoads += 1; return png }
+        photos.importPhoto(title: "Jacket", screenshot: false) { photoLoads += 1; return png }
+        photos.importPhoto(title: "Shoes", screenshot: false) { photoLoads += 1; return png }
         photos.setActive(true)
         try await Task.sleep(for: .milliseconds(30))
         precondition(photoLoads == 0, "Photo imports wait for initial layout")
@@ -289,7 +289,7 @@ import UIKit
         try await waitFor { photos.items[0].state == "Ready" }
         precondition(photoLoads == 2, "Background retries reuse the retained original")
         var failedLoads = 0
-        photos.importPhoto {
+        photos.importPhoto(screenshot: false) {
             failedLoads += 1
             return failedLoads == 1 ? Data("bad photo".utf8) : png
         }
@@ -304,7 +304,7 @@ import UIKit
         precondition(photosSession.document.placements[dismissedPlacement] == nil)
 
         var delayedLoads = 0
-        photos.importPhoto {
+        photos.importPhoto(screenshot: false) {
             delayedLoads += 1
             try? await Task.sleep(for: .milliseconds(80))
             return png
@@ -317,7 +317,7 @@ import UIKit
         try await waitFor { photos.items.last?.state == "Ready" }
         precondition(delayedLoads == 2)
 
-        photos.importPhoto {
+        photos.importPhoto(screenshot: false) {
             try? await Task.sleep(for: .milliseconds(80))
             return png
         }

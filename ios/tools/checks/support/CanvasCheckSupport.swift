@@ -34,6 +34,7 @@ import Foundation
         uploads[key] = data
         completion(nil)
     }
+    func findCandidates(_ jpeg: Data) async throws -> [Product.Match.Candidate] { [] }
     func completeWrites() {
         holdWrites = false
         let completions = heldCompletions

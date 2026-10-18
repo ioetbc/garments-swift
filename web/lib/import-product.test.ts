@@ -9,13 +9,13 @@ describe("shared product imports", () => {
     const handler = createImportHandler(async () => ({ metadata: { ogTitle: " Product ", title: "Page", ogImage: "https://cdn.example/photo.png" } }));
     const response = await handler(request(url));
     const { diagnostics, ...product } = await response.json();
-    assert.deepEqual(product, { url, title: "Product", imageURL: "https://cdn.example/photo.png", imageURLs: ["https://cdn.example/photo.png"] });
+    assert.deepEqual(product, { url, title: "Product", imageURL: "https://cdn.example/photo.png", imageURLs: ["https://cdn.example/photo.png"], price: null });
     assert.ok(diagnostics.some((line: string) => line.includes("Firecrawl completed")));
     assert.ok(diagnostics.some((line: string) => line.includes("no markdown")));
     assert.equal(response.headers.get("cache-control"), "no-store");
   });
   test("partial metadata never chooses unrelated page images", () => {
-    assert.deepEqual(normalizeImport("https://shop.example", { metadata: { title: "Page", ogImage: "/relative.jpg" }, images: ["https://cdn.example/logo.png"] }), { url: "https://shop.example", title: "Page", imageURL: null, imageURLs: [] });
+    assert.deepEqual(normalizeImport("https://shop.example", { metadata: { title: "Page", ogImage: "/relative.jpg" }, images: ["https://cdn.example/logo.png"] }), { url: "https://shop.example", title: "Page", imageURL: null, imageURLs: [], price: null });
     assert.equal(normalizeImport("https://shop.example", {}).title, null);
   });
   test("falls back to alternate social metadata when ogImage is missing or invalid", () => {
@@ -131,4 +131,26 @@ test("SSENSE gallery rejects unrelated SKUs, unsafe URLs and lookalike hosts", (
   assert.deepEqual(normalizeImport(url.replace("ssense.com", "ssense.com.evil.example"), {
     metadata: { ogImage: primary }, rawHtml: '<img src="https://img.ssensemedia.com/images/w_1920/262420M192001_2/shirt.jpg">',
   }).imageURLs, [primary]);
+});
+
+test("records the listing Price from Product JSON-LD offers, in minor units", () => {
+  const ld = (value: unknown) => `<script type="application/ld+json">${JSON.stringify(value)}</script>`;
+  const page = (rawHtml: string) => normalizeImport("https://shop.example/coat", { metadata: { title: "Coat" }, rawHtml }).price;
+  assert.deepEqual(page(ld({ "@type": "Product", name: "Coat", offers: { "@type": "Offer", price: "249.50", priceCurrency: "GBP" } })), { amount: 24950, currency: "GBP" });
+  assert.deepEqual(page(ld({ "@graph": [{ "@type": "Product", offers: [{ price: 1200, priceCurrency: "jpy" }] }] })), { amount: 1200, currency: "JPY" });
+  assert.deepEqual(page(ld({ "@type": "Product", offers: { "@type": "AggregateOffer", lowPrice: "80", priceCurrency: "EUR" } })), { amount: 8000, currency: "EUR" });
+});
+
+test("records the listing Price from og and product price meta tags", () => {
+  const meta = (prefix: string) => `<meta property="${prefix}:price:amount" content="1,045.00"><meta property="${prefix}:price:currency" content="USD">`;
+  for (const prefix of ["og", "product"]) {
+    assert.deepEqual(normalizeImport("https://shop.example/coat", { rawHtml: meta(prefix) }).price, { amount: 104500, currency: "USD" });
+  }
+});
+
+test("a page without a usable Price records none", () => {
+  for (const rawHtml of ["", '<meta property="og:price:amount" content="12">', '<meta property="product:price:amount" content="free"><meta property="product:price:currency" content="GBP">',
+    '<script type="application/ld+json">{"@type":"Product","offers":{"price":"10","priceCurrency":"pounds"}}</script>']) {
+    assert.equal(normalizeImport("https://shop.example/coat", { rawHtml }).price, null);
+  }
 });

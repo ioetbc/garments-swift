@@ -40,27 +40,24 @@ bun run dev --hostname 0.0.0.0 --port 3000
 
 `GET /api/health` returns `{"status":"ok","message":"Connected to Garms."}` with caching disabled. It is a public connectivity check and returns no user data or credentials.
 
-Run the iOS app in the simulator using the Debug configuration, open any product's details drawer, then tap **Test connection**. It uses `http://localhost:3000` and displays the server's message or an error. The button is disabled during the request, which has a 10-second timeout.
-
-For a physical iPhone, set `GARMS_API_BASE_URL` in `ios/Configuration/Debug-Info.plist` to your ngrok HTTPS URL, or `http://<your-Mac-hostname>.local:3000` on the same network (find the hostname in macOS Sharing settings). This value is bundled into Debug builds and works when opening the app directly from the phone. Rebuild after changing it, including when your ngrok URL changes. Keep the API server and tunnel running. Allow local network access when prompted. On a phone, `localhost` refers to the phone, not your Mac. Xcode’s **Edit Scheme → Run → Arguments → Environment Variables** can override `GARMS_API_BASE_URL`, but that override only applies to Xcode launches. The environment override and local-network transport exception apply only to Debug builds.
-
-For Release builds, configure the target's `INFOPLIST_KEY_GARMS_API_BASE_URL` build setting with the deployed HTTPS origin. Until configured, the button reports that the server address is missing. Release builds require HTTPS and have no local-network transport exception. The Debug exception uses Apple's [NSAllowsLocalNetworking](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowslocalnetworking).
+Imports, availability checks and "Send log" run as Convex actions (`web/convex/imports.ts`) for the signed-in User, so the app needs no API server or tunnel. Set `FIRECRAWL_API_KEY` and `AI_GATEWAY_API_KEY` on each Convex deployment (`npx convex env set`). **Test connection** in a product's details drawer reports whether the app is connected to Convex; sent logs appear in the Convex dashboard logs.
 
 Server-only credentials belong in `web/.env.local` locally and the hosting provider's environment settings when deployed. Configure the website deployment's root directory as `web`. The prototype shared-link endpoint is described below.
 
 ## Convex backend
 
 Every Canvas, Product, Sticker and Group is stored in Convex and scoped to the User
-from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Users sign in with email and password or Apple
+from the auth identity (see `CONTEXT.md` and `docs/adr/0002`). Users sign in with email and password
 through Clerk (`docs/adr/0001`); a request with no identity is always rejected. Each Convex
 deployment is paired with one Clerk instance: dev ↔ Clerk development, prod ↔ Clerk production.
-In each Clerk instance, enable Email (with password, verified by email code) and Sign in with Apple, register the iOS app
+In each Clerk instance, enable Email (with password, verified by email code) as the only method, register the iOS app
 as a native application, and activate the Convex integration.
 
 ```sh
 cd web
 npx convex env set CLERK_FRONTEND_API_URL https://<instance>.clerk.accounts.dev  # the paired Clerk instance
 npx convex env set CLERK_SECRET_KEY sk_test_…  # lets deleting a User remove their Clerk user
+npx convex env set AI_GATEWAY_API_KEY …  # reads the shop and title off a Screenshot (also used by availability checks)
 npx convex dev                         # local or dev deployment; regenerates convex/_generated
 npx vitest run                         # backend tests (convex-test, in memory)
 bun seed/seed-canvas.ts "<tokenIdentifier>"  # optional: fill your User with the sample Products
@@ -109,7 +106,13 @@ failures retain the original and support **Retry background removal**. Processin
 pauses while the app is inactive and resumes when it returns.
 
 Photo imports use the system photo picker, need no API server, and have no listing
-URL or availability check. As with link imports, items remain in session memory
+URL or availability check. Photos that the library marks as **Screenshots** (Garms asks for photo
+library access to tell) are the exception: once the Sticker is on the Canvas, the whole
+Screenshot, flattened onto white, is sent to the `matches:search` Convex action. A vision
+model behind the AI Gateway reads the shop, its website and the product title off it, then
+Firecrawl searches that title on the shop's site (signed-in Users only, 30 searches per User per day). The listing found is imported
+straight away through `/api/import`, exactly like a shared link. When nothing is found or the
+import fails, the Product stays **Awaiting match** until the User pastes a link in the Imports sheet or skips. As with link imports, items remain in session memory
 and are lost when the app is terminated. Each photo's detected subjects stay
 together in one sticker; selecting individual garments within a photo is not supported.
 

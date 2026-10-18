@@ -44,6 +44,18 @@ _Avoid_: Cost, listing price
 Whether a Product can still be bought from its source link, as last checked: available, sold, removed, out of stock, or unknown, plus when it was checked.
 _Avoid_: Status, stock
 
+**Screenshot**:
+An image imported from Photos that the system marks as a screen capture, assumed to show a shop's listing in an app or website. Only Screenshots are searched for Candidate matches; other photos import without a link.
+_Avoid_: Screen grab, capture
+
+**Candidate match**:
+A web page that might be the listing for a Product imported from a Screenshot, offered to the User to confirm or reject. Kept on the Product until the User confirms one or rejects them all; only a confirmed Candidate match becomes the Product's source link and the source of its details.
+_Avoid_: Result, suggestion, lens hit
+
+**Awaiting match**:
+The state of a Product imported from a Screenshot until the User resolves its source link: by confirming a Candidate match, entering a link themselves, or skipping. Nothing else ends it; a search that finds nothing or fails leaves it awaiting.
+_Avoid_: Unmatched, pending, unconfirmed
+
 **Sticker**:
 One appearance of a Product on a Canvas, with its own position, size, stacking order and Group membership. A Product can have many Stickers, across one or several Canvases.
 _Avoid_: Placement (code name), item, card

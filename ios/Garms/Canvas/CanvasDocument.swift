@@ -14,10 +14,25 @@ nonisolated struct Product: Codable, Equatable, Identifiable, Sendable {
     var galleryAssets: [String] = []
     var price: Price? = nil
     var availability: Availability? = nil
+    /// Present exactly while this Product, imported from a Screenshot, is Awaiting match.
+    var match: Match? = nil
     // Field names on the wire, so the document's rows are also the change set's rows.
     enum CodingKeys: String, CodingKey {
         case id = "key", title, category, asset = "cutout", aspect, product_url = "sourceUrl", notes,
-             originalAsset = "original", galleryAssets = "photos", price, availability
+             originalAsset = "original", galleryAssets = "photos", price, availability, match
+    }
+    /// The search for the listing a Screenshot shows, and the pages it offered.
+    nonisolated struct Match: Codable, Equatable, Sendable {
+        enum Status: String, Codable, Sendable { case searching, found, notFound = "none", failed, loadFailed }
+        /// A web page that might be the listing.
+        struct Candidate: Codable, Equatable, Sendable {
+            var url: String
+            var title: String? = nil
+            var domain: String
+            var thumbnail: String? = nil
+        }
+        var status: Status
+        var candidates: [Candidate] = []
     }
     var detailAssets: [String] {
         var seen: Set<String> = []
@@ -102,6 +117,12 @@ nonisolated struct StickerPlacement: Codable, Equatable, Identifiable, Sendable 
     /// Fractional stacking key; higher draws on top. Reordering rewrites only this Sticker.
     var z: String
     var bounds: CGRect { CGRect(x: center.x-width/2, y: center.y-height/2, width: width, height: height) }
+    /// Reshapes to a new image aspect, keeping the centre and longest edge.
+    mutating func fit(aspect: Double) {
+        let edge = max(width, height)
+        width = aspect >= 1 ? edge : edge * aspect
+        height = aspect >= 1 ? edge / aspect : edge
+    }
     var valid: Bool {
         center.valid && width.isFinite && height.isFinite && width > 0 && height > 0 &&
         CanvasConfiguration.edge.contains(max(width,height))

@@ -13,6 +13,8 @@ import Foundation
     func deleteProduct(_ id: String, completion: @escaping @MainActor (Error?) -> Void)
     /// Stores image bytes under a file key that Products can already reference.
     func upload(_ data: Data, key: String, completion: @escaping @MainActor (Error?) -> Void)
+    /// Up to five Candidate matches for a JPEG crop of a Screenshot. Costs one Cloud Vision call.
+    func findCandidates(_ jpeg: Data) async throws -> [Product.Match.Candidate]
 }
 
 /// One Canvas as stored: the rows the server returns, plus URLs for the files it references.

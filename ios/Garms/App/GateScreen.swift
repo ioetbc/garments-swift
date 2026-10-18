@@ -1,13 +1,11 @@
 import SwiftUI
-import AuthenticationServices
 import ClerkKit
 
-/// The way in: email and password, or Sign in with Apple. Both go through Clerk.
+/// The way in: email and password through Clerk.
 struct GateScreen: View {
     /// A Clerk attempt waiting on the code Clerk emailed: verifying a new address, or a new device.
     private enum Pending { case signUp(SignUp), signIn(SignIn) }
 
-    @Environment(\.colorScheme) private var colorScheme
     @State private var signingIn = false
     @State private var failure: String?
     @State private var email = ""
@@ -63,16 +61,6 @@ struct GateScreen: View {
                         .buttonStyle(.bordered)
                 }
             }
-            SignInWithAppleButton(.signIn) { request in
-                failure = nil
-                request.requestedScopes = [.fullName, .email]
-            } onCompletion: { result in
-                Task { await complete(result) }
-            }
-            .signInWithAppleButtonStyle(colorScheme == .dark ? .white : .black)
-            .frame(height: 50)
-            .disabled(signingIn)
-            .opacity(signingIn ? 0.5 : 1)
         }
         .padding(24)
     }
@@ -118,26 +106,6 @@ struct GateScreen: View {
         case nil: break
         }
         pending = nil; code = ""
-    }
-
-    private func complete(_ result: Result<ASAuthorization, Error>) async {
-        do {
-            let authorization = try result.get()
-            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
-                  let token = credential.identityToken.flatMap({ String(data: $0, encoding: .utf8) }) else {
-                failure = "Apple didn't return a sign-in token. Try again."
-                return
-            }
-            signingIn = true
-            defer { signingIn = false }
-            // Signs up when new (Apple only shares the name the first time), otherwise signs in.
-            try await Clerk.shared.auth.signUpWithIdToken(token, provider: .apple,
-                firstName: credential.fullName?.givenName, lastName: credential.fullName?.familyName)
-        } catch let error as ASAuthorizationError where error.code == .canceled {
-            // Cancelling is harmless: stay on the gate quietly.
-        } catch {
-            failure = "Couldn't sign in. \(error.localizedDescription) Try again."
-        }
     }
 }
 

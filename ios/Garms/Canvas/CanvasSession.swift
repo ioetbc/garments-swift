@@ -32,6 +32,8 @@ import Observation
     var selection: String?
     var inspectedPlacement: StickerPlacement?
     var inspectedGroup: CanvasNamedGroup?
+    /// A Product Awaiting match whose row in the Imports sheet a tap on its Sticker asked to show.
+    var revealedMatch: String?
     var error: String?
 
     /// Records a successful check on the Product. Failed checks keep the last known Availability.
@@ -250,7 +252,14 @@ import Observation
 
     func select(_ id: String?, showDetails: Bool = false) {
         selection = id
-        inspectedPlacement = showDetails ? id.flatMap { document.placements[$0] } : nil
+        let placement = showDetails ? id.flatMap { document.placements[$0] } : nil
+        // A Product Awaiting match is resolved in the Imports sheet, not its details.
+        if let placement, document.products[placement.productID]?.match != nil {
+            inspectedPlacement = nil
+            revealedMatch = placement.productID
+        } else {
+            inspectedPlacement = placement
+        }
         render?()
     }
     func deletePlacement(_ id: String) {
@@ -408,34 +417,81 @@ import Observation
         return document.products[product.id] == product ? asset : nil
     }
     @discardableResult
-    func installImportOriginal(_ id: String, title: String?, artwork: ImportedImageDownload.Artwork) -> String? {
-        updateImport(id, title: title, artwork: artwork, original: true)
+    func installImportOriginal(_ id: String, title: String?, price: Price?, artwork: ImportedImageDownload.Artwork) -> String? {
+        updateImport(id, title: title, price: price, artwork: artwork, original: true)
     }
     @discardableResult
     func applyImportCutout(_ id: String, artwork: ImportedImageDownload.Artwork) -> String? {
         guard let placement = document.placements[id], document.products[placement.productID]?.originalAsset != nil else { return nil }
-        return updateImport(id, title: nil, artwork: artwork, original: false)
+        return updateImport(id, title: nil, price: nil, artwork: artwork, original: false)
     }
     @discardableResult
-    func updateImport(_ id: String, title: String?, artwork: ImportedImageDownload.Artwork?, original: Bool = true) -> String? {
+    func updateImport(_ id: String, title: String?, price: Price?, artwork: ImportedImageDownload.Artwork?, original: Bool = true) -> String? {
         guard document.placements[id] != nil else { return nil }
         resolveInteraction?()
         guard var placement = document.placements[id], var product = document.products[placement.productID] else { return nil }
         if let artwork { guard artwork.aspect.isFinite, artwork.aspect > 0 else { return nil } }
         let before = document
         if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { product.title = title }
+        if let price { product.price = price }
         if let artwork {
             product.asset = importedAssets.insert(artwork.data)
             if original { product.originalAsset = product.asset }
             product.aspect = artwork.aspect
-            let edge = max(placement.width, placement.height)
-            placement.width = artwork.aspect >= 1 ? edge : edge * artwork.aspect
-            placement.height = artwork.aspect >= 1 ? edge / artwork.aspect : edge
+            placement.fit(aspect: artwork.aspect)
         }
         document.products[product.id] = product
         document.placements[id] = placement
         complete(before, recordHistory: false)
         return document.products[product.id] == product ? product.asset : nil
+    }
+    /// Records the search state of a Product imported from a Screenshot; nil ends Awaiting match.
+    /// A fact about the import, not an undoable edit.
+    func setMatch(_ productID: String, _ match: Product.Match?) {
+        guard document.products[productID] != nil, document.products[productID]?.match != match else { return }
+        resolveInteraction?()
+        let before = document
+        document.products[productID]?.match = match
+        complete(before, recordHistory: false)
+    }
+    /// Fills a Product Awaiting match from its confirmed listing, exactly as a shared link would:
+    /// link, title, Price and Photos from the page, the page's image as Cutout and Original,
+    /// and the Screenshot kept as a Photo. Its Stickers keep their centre, longest edge, stacking and Group.
+    func resolveMatch(_ productID: String, url: String, page: GarmsAPI.ImportedProduct,
+                      original: ImportedImageDownload.Artwork, cutout: ImportedImageDownload.Artwork?,
+                      photos: [ImportedImageDownload.Artwork]) {
+        guard var product = document.products[productID], product.match != nil else { return }
+        resolveInteraction?()
+        let before = document
+        let screenshot = product.originalAsset ?? product.asset
+        let shown = cutout ?? original
+        product.product_url = url
+        if let title = page.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { product.title = title }
+        product.price = page.price
+        let originalAsset = importedAssets.insert(original.data)
+        product.originalAsset = originalAsset
+        product.asset = cutout.map { importedAssets.insert($0.data) } ?? originalAsset
+        product.aspect = shown.aspect
+        product.galleryAssets = [screenshot] + photos.map { importedAssets.insert($0.data) }
+        product.match = nil
+        document.products[productID] = product
+        for (id, placement) in document.placements where placement.productID == productID {
+            document.placements[id]?.fit(aspect: shown.aspect)
+        }
+        complete(before, recordHistory: false)
+    }
+    /// Re-points every Sticker of `productID` at `existing`, which already holds the same link, and deletes `productID`.
+    /// Stickers stay where they are.
+    func mergeProduct(_ productID: String, into existing: String) {
+        guard productID != existing, document.products[productID] != nil, let target = document.products[existing] else { return }
+        resolveInteraction?()
+        let before = document
+        for (id, placement) in document.placements where placement.productID == productID {
+            document.placements[id]?.productID = existing
+            document.placements[id]?.fit(aspect: target.aspect)
+        }
+        document.products[productID] = nil
+        complete(before)
     }
     // These also provide non-gesture equivalents for VoiceOver.
     func nudge(x: Double, y: Double) {

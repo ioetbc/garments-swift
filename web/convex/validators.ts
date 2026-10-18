@@ -15,6 +15,23 @@ export const availability = v.object({
   checkedAt: v.number(),
 });
 
+/** A web page that might be the listing a Screenshot shows. */
+export const candidate = v.object({
+  url: v.string(),
+  title: v.optional(v.string()),
+  domain: v.string(),
+  thumbnail: v.optional(v.string()),
+});
+
+/** Present exactly while a Product imported from a Screenshot is Awaiting match. */
+export const match = v.object({
+  status: v.union(
+    v.literal("searching"), v.literal("found"), v.literal("none"),
+    v.literal("failed"), v.literal("loadFailed"),
+  ),
+  candidates: v.array(candidate),
+});
+
 const point = v.object({ x: v.number(), y: v.number() });
 const colour = v.object({ red: v.number(), green: v.number(), blue: v.number() });
 
@@ -31,6 +48,7 @@ export const product = v.object({
   original: v.optional(v.string()),
   photos: v.array(v.string()),
   availability: v.optional(availability),
+  match: v.optional(match),
 });
 
 /** One appearance of a Product on a Canvas; `z` is a fractional stacking key. */
@@ -82,3 +100,4 @@ export type Group = Infer<typeof group>;
 export type Link = Infer<typeof link>;
 export type ChangeSet = Infer<typeof changeSet>;
 export type Sample = Infer<typeof sample>;
+export type Candidate = Infer<typeof candidate>;
