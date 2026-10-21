@@ -24,7 +24,9 @@ import Observation
     @ObservationIgnored var render: (() -> Void)?
     @ObservationIgnored var resolveInteraction: (() -> Void)?
     @ObservationIgnored let importedAssets: ImportedAssetLibrary
-    @ObservationIgnored lazy var imports = ImportCoordinator(session: self)
+    @ObservationIgnored lazy var imports = ImportCoordinator(session: self,
+        fetch: { [server] in try await server.importProduct(url: $0) },
+        search: { [server] in try await server.findListing(try await ImportedImageDownload.flattenedJPEG($0)) })
     let history = CanvasHistory()
     var revision = 0
     var selection: String?

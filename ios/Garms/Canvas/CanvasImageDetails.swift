@@ -3,7 +3,6 @@ import SwiftUI
 struct CanvasImageDetails: View {
     let product: Product
     let library: ImportedAssetLibrary
-    @Binding var status: String
     @Binding var title: String
     @Binding var category: String
     @Binding var price: Price?
@@ -52,12 +51,6 @@ struct CanvasImageDetails: View {
                                 }
                             }
                         }
-                        Picker("Status", selection: $status) {
-                            ForEach(["Owned", "Wishlist", "Ordered", "Returning", "Returned", "Sold"], id: \.self) { value in
-                                Text(value).tag(value)
-                            }
-                        }
-                        .pickerStyle(.menu)
                     }
                     Section("Notes") {
                         TextField("Add notes…", text: $notes, axis: .vertical)

@@ -31,7 +31,7 @@ import UIKit
             requests += 1
             try await Task.sleep(for: .milliseconds(20))
             return .init(url: url, title: "Imported jacket", imageURLs: ["https://cdn.example/image.png"])
-        }, image: { _ in artwork }, cutout: { _ in nil })
+        }, image: { _ in artwork }, cutout: { _ in nil }, search: { _ in nil })
         try inbox.enqueue(record)
         try inbox.enqueue(SharedImport(url: record.url))
         try Data("bad".utf8).write(to: directory.appendingPathComponent("bad.json"))
@@ -75,7 +75,7 @@ import UIKit
         let paused = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
             calls += 1
             return .init(url: url, title: "Late")
-        })
+        }, search: { _ in nil })
         try inbox.enqueue(second); paused.checkInbox()
         try await waitFor { if case .failed = paused.items.first?.phase { true } else { false } }
         precondition(calls == 1 && paused.items[0].placementID == nil)
@@ -97,7 +97,7 @@ import UIKit
             defer { active -= 1 }
             try await Task.sleep(for: .milliseconds(10))
             return .init(url: url, title: "Ready product", imageURLs: ["https://cdn.example/image.png"])
-        }, image: { _ in .init(data: data, aspect: 0.5) }, cutout: { _ in nil })
+        }, image: { _ in .init(data: data, aspect: 0.5) }, cutout: { _ in nil }, search: { _ in nil })
         ready.checkInbox()
         precondition(readySession.document.order.count == readyCount)
         precondition(ready.progress?.current == 1 && ready.progress?.total == 2)
@@ -128,7 +128,7 @@ import UIKit
         let failingRemoval = ImportCoordinator(session: session, inbox: inbox, acknowledge: { _ in
             removals += 1
             throw URLError(.cannotRemoveFile)
-        }, fetch: { url in .init(url: url, title: nil) })
+        }, fetch: { url in .init(url: url, title: nil) }, search: { _ in nil })
         failingRemoval.checkInbox(); failingRemoval.checkInbox()
         try await waitFor { if case .failed = failingRemoval.items.first?.phase { true } else { false } }
         precondition(removals == 2 && failingRemoval.items.count == 1)
@@ -145,7 +145,7 @@ import UIKit
         }, cutout: { _ in
             testCutouts += 1
             return nil
-        })
+        }, search: { _ in nil })
         // The same link shared twice imports once, and waits for the initial layout.
         let testLink = "https://shop.example/test-link"
         try testInbox.enqueue(SharedImport(url: testLink)); try testInbox.enqueue(SharedImport(url: testLink))
@@ -171,7 +171,7 @@ import UIKit
             fetch: { url in .init(url: url, title: "Batch product", imageURLs: ["https://cdn.example/image.png"]) },
             image: { _ in artwork }, cutout: { _ in
                 await withCheckedContinuation { pending = $0 }
-            })
+            }, search: { _ in nil })
         for number in 1...4 { try batchInbox.enqueue(SharedImport(url: "https://shop.example/batch-\(number)")) }
         batch.checkInbox()
         precondition(batchSession.document.order.count == batchBaseline)
@@ -208,7 +208,7 @@ import UIKit
             }, cutout: { _ in
                 galleryCutouts += 1
                 return galleryCutouts == 1 ? nil : artwork
-            })
+            }, search: { _ in nil })
         try galleryInbox.enqueue(SharedImport(url: "https://shop.example/gallery")); gallery.checkInbox()
         try await waitFor { gallery.items.first?.phase.isReady == true }
         precondition(galleryDownloads == [firstURL, secondURL, badURL, thirdURL] && galleryCutouts == 1)
@@ -235,7 +235,7 @@ import UIKit
             inbox: SharedImportInbox(directoryOverride: directory.appendingPathComponent("photos")),
             fetch: { _ in preconditionFailure("Photos must not fetch listing metadata") },
             image: { _ in preconditionFailure("Photos must not download listing images") },
-            cutout: { _ in nil })
+            cutout: { _ in nil }, search: { _ in nil })
         var photoLoads = 0
         photos.importPhoto(title: "Jacket") { photoLoads += 1; return png }
         photos.importPhoto(title: "Shoes") { photoLoads += 1; return png }

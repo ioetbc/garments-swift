@@ -65,7 +65,7 @@ import Vision
         let coordinator = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
             fetches += 1
             return .init(url: url, title: "Two shoes", imageURLs: ["https://cdn.example/shoes.png"])
-        }, image: { _ in downloads += 1; return source }, cutout: { try await gate.run($0) })
+        }, image: { _ in downloads += 1; return source }, cutout: { try await gate.run($0) }, search: { _ in nil })
         let record = SharedImport(url: "https://shop.example/shoes")
         try inbox.enqueue(record)
         coordinator.checkInbox()
@@ -146,7 +146,7 @@ import Vision
                 if cutoutCalls > 1 { return cutout }
                 if throwsError { throw URLError(.cannotDecodeContentData) }
                 return nil
-            })
+            }, search: { _ in nil })
             try inbox.enqueue(SharedImport(url: "https://shop.example/fallback-\(throwsError)"))
             fallback.checkInbox()
             try await waitFor { fallback.items.first?.phase.isReady == true }

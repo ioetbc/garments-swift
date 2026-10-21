@@ -18,7 +18,7 @@ import Foundation
         let files = try inbox.files()
         precondition(files.count == 2)
         check(Set(try files.map { try inbox.read($0).id }) == Set([a.id, b.id]))
-        try inbox.acknowledge(files[0])
+        try SharedImportInbox.acknowledge(files[0])
         check(try inbox.files().count == 1)
         print("Shared import checks passed")
     }

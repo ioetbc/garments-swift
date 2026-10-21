@@ -6,7 +6,6 @@ import Photos
 struct CanvasScreen: View {
     let session: CanvasSession
     let onSettings: () -> Void
-    @State private var statuses: [String: String] = [:]
     @State private var showingImports = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var searchExpanded = false
@@ -165,10 +164,7 @@ struct CanvasScreen: View {
     private func productDetails(for placement: StickerPlacement, onDelete: @escaping () -> Void) -> some View {
         let _ = session.revision
         if let product = session.document.products[placement.productID] {
-            CanvasImageDetails(product: product, library: session.importedAssets, status: Binding(
-                get: { statuses[placement.id] ?? "Wishlist" },
-                set: { statuses[placement.id] = $0 }
-            ), title: Binding(
+            CanvasImageDetails(product: product, library: session.importedAssets, title: Binding(
                 get: { session.document.products[product.id]?.title ?? "" },
                 set: { session.updateProductTitle(product.id, title: $0) }
             ), category: Binding(

@@ -29,5 +29,5 @@ nonisolated struct SharedImportInbox: Sendable {
         _ = try SharedLink.normalized(item.url)
         return item
     }
-    func acknowledge(_ file: URL) throws { try FileManager.default.removeItem(at: file) }
+    static func acknowledge(_ file: URL) throws { try FileManager.default.removeItem(at: file) }
 }

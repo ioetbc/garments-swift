@@ -70,18 +70,18 @@ import OSLog
     @ObservationIgnored private let acknowledge: (URL) throws -> Void
     @ObservationIgnored private let fetch: (String) async throws -> GarmsAPI.ImportedProduct
     @ObservationIgnored private let image: (String) async throws -> Artwork
-    @ObservationIgnored private let cutout: ((Artwork) async throws -> Artwork?)?
+    @ObservationIgnored private let cutout: (Artwork) async throws -> Artwork?
     @ObservationIgnored private let search: (Artwork) async throws -> GarmsAPI.Listing?
     init(session: CanvasSession, inbox: SharedImportInbox = .init(),
-         acknowledge: ((URL) throws -> Void)? = nil,
-         fetch: ((String) async throws -> GarmsAPI.ImportedProduct)? = nil,
+         acknowledge: @escaping (URL) throws -> Void = SharedImportInbox.acknowledge,
+         fetch: @escaping (String) async throws -> GarmsAPI.ImportedProduct,
          image: @escaping (String) async throws -> Artwork = { try await ImportedImageDownload.fetch($0) },
-         cutout: ((Artwork) async throws -> Artwork?)? = nil,
-         search: ((Artwork) async throws -> GarmsAPI.Listing?)? = nil) {
-        self.session = session; self.inbox = inbox; self.image = image; self.cutout = cutout
-        self.acknowledge = acknowledge ?? { try inbox.acknowledge($0) }
-        self.fetch = fetch ?? { [server = session.server] in try await server.importProduct(url: $0) }
-        self.search = search ?? { [server = session.server] in try await server.findListing(try await ImportedImageDownload.flattenedJPEG($0)) }
+         cutout: @escaping (Artwork) async throws -> Artwork? = {
+             try await ForegroundCutoutProcessor.extract($0) { ImportCoordinator.logger.info("\($0, privacy: .public)") }
+         },
+         search: @escaping (Artwork) async throws -> GarmsAPI.Listing?) {
+        self.session = session; self.inbox = inbox; self.acknowledge = acknowledge
+        self.fetch = fetch; self.image = image; self.cutout = cutout; self.search = search
     }
     /// Picks up links shared from other apps, then processes the queue.
     func checkInbox() {
@@ -141,7 +141,7 @@ import OSLog
             runner = nil
         }
     }
-    private static let logger = Logger(subsystem: "f.garment-swift-2", category: "Import")
+    nonisolated static let logger = Logger(subsystem: "f.garment-swift-2", category: "Import")
     private func log(_ id: UUID, _ message: String, warning: Bool = false) {
         if warning { Self.logger.warning("\(id.uuidString, privacy: .public) \(message, privacy: .public)") }
         else { Self.logger.info("\(id.uuidString, privacy: .public) \(message, privacy: .public)") }
@@ -268,11 +268,7 @@ import OSLog
         let extracted: Artwork?
         var warning: String?
         do {
-            if let cutout {
-                extracted = try await cutout(original)
-            } else {
-                extracted = try await ForegroundCutoutProcessor.extract(original) { [weak self] line in await self?.log(id, line) }
-            }
+            extracted = try await cutout(original)
             if extracted == nil { warning = "Background removal returned no usable cutout. No foreground image was produced." }
         }
         catch is CancellationError { throw CancellationError() }
