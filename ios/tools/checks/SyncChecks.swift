@@ -10,10 +10,10 @@ import Foundation
             session.move(id, x: 30, y: 10)
             precondition(sync.applied.count == 1)
             let moved = sync.applied[0]
-            precondition(moved.stickers.map(\.key) == [id] && moved.stickers[0].x == original.center.x + 30)
+            precondition(moved.stickers.map(\.id) == [id] && moved.stickers[0].center.x == original.center.x + 30)
             precondition(moved.products.isEmpty && moved.groups.isEmpty && moved.deletedStickers.isEmpty)
             session.undo()
-            precondition(sync.applied.count == 2 && sync.applied[1].stickers == [CanvasRemote.Sticker(original)])
+            precondition(sync.applied.count == 2 && sync.applied[1].stickers == [original])
         }
 
         // Offline, the Canvas is read-only and says why.
@@ -45,13 +45,13 @@ import Foundation
             precondition(sync.applied.allSatisfy { $0.deletedProducts.isEmpty })
             precondition(session.document.products[productID]!.matchesSearch("jacquemus"))
             let placed = session.placeSticker(of: productID)!
-            precondition(session.document.namedGroups!.first(where: \.isRecentUploads)!.members == [placed])
+            precondition(session.document.namedGroups.first(where: \.isRecentUploads)!.members == [placed])
             session.placeSticker(of: productID)
 
             session.deleteProduct(productID)
             precondition(sync.deletedProducts == [productID] && session.document.products[productID] == nil)
             precondition(!session.document.placements.values.contains { $0.productID == productID })
-            precondition(session.document.namedGroups!.allSatisfy { $0.members.allSatisfy { session.document.placements[$0] != nil } })
+            precondition(session.document.namedGroups.allSatisfy { $0.members.allSatisfy { session.document.placements[$0] != nil } })
             precondition(!session.history.canUndo)
         }
 
@@ -69,12 +69,12 @@ import Foundation
         // A stored Canvas round-trips into an equal document, Groups and detached links included.
         do {
             let (session, _) = CanvasFixtures.session(laidOut: true)
-            let members = session.document.namedGroups!.first { !$0.isRecentUploads }!.members
-            session.detachedLinks = [CanvasGroupLink(members[0], members[1])]
+            let members = session.document.namedGroups.first { !$0.isRecentUploads }!.members
+            session.stage { $0.detachedLinks = [CanvasGroupLink(members[0], members[1])] }
             let stored = CanvasRemote(document: session.document, detachedLinks: session.detachedLinks)
             let decoded = try! JSONDecoder().decode(CanvasRemote.self, from: JSONEncoder().encode(stored))
-            precondition(decoded.document == session.document && decoded.links == session.detachedLinks)
-            let changes = CanvasChangeSet(from: CanvasDocument(), [], to: decoded.document, decoded.links)
+            precondition(decoded.document == session.document && decoded.detachedLinks == session.detachedLinks)
+            let changes = CanvasChangeSet(from: CanvasDocument(), [], to: decoded.document, decoded.detachedLinks)
             precondition(changes.stickers.count == session.document.placements.count && changes.links.count == 1)
 
             // Loading, grouping and naming leave a stored Canvas exactly as it was.

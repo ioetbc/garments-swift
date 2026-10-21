@@ -19,7 +19,7 @@ import UIKit
         let progress = min(1, max(0, (session.camera.zoom - 0.5) / 0.25))
         titleOpacity = CGFloat(progress * progress * (3 - 2 * progress))
         guard titleOpacity > 0 else { titles = []; return }
-        titles = (session.document.namedGroups ?? []).compactMap { group in
+        titles = session.document.namedGroups.compactMap { group in
             let worldBounds = group.bounds(in: session.document)
             guard !worldBounds.isNull else { return nil }
             let rect = displayedGroupBounds?(group) ?? screenRect(worldBounds, session)

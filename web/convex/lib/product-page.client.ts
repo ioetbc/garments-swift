@@ -250,7 +250,7 @@ export function extractProduct(url: string, document: Document): { product: Impo
   const imageURLs = productGallery(url, document, image?.url);
   const price = listingPrice(document);
   return {
-    product: { url, title: title?.trim().slice(0, 500) ?? null, imageURL: imageURLs[0] ?? null, imageURLs, price },
+    product: { url, title: title?.trim().slice(0, 500) ?? null, imageURLs, price },
     imageSource: imageURLs[0] === image?.url ? image?.source : (imageURLs.length ? "product gallery" : undefined),
   };
 }

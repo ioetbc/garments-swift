@@ -41,9 +41,7 @@ import Foundation
 extension CanvasSession {
     /// Moves a Sticker as one committed edit, like a finished drag.
     func move(_ id: String, x: Double, y: Double) {
-        let before = document
-        document.placements[id]!.center = document.placements[id]!.center + WorldPoint(x: x, y: y)
-        complete(before)
+        edit { $0.document.placements[id]!.center = $0.document.placements[id]!.center + WorldPoint(x: x, y: y) }
     }
 }
 
@@ -57,7 +55,7 @@ extension CanvasFixtures {
         if laidOut { groups = fit(&document, viewport: viewport) }
         document.reconcileGroupNames(groups)
         let bounds = CanvasGeometry.union(Array(document.placements.values))
-        document.namedGroups?.append(CanvasNamedGroup(
+        document.namedGroups.append(CanvasNamedGroup(
             members: [], name: "Recent uploads", backgroundColour: .init(red: 0.22, green: 1, blue: 0.08),
             isRecentUploads: true,
             emptyCenter: WorldPoint(x: bounds.isNull ? 0 : bounds.maxX + 250, y: viewport.height / 2)))

@@ -19,7 +19,7 @@ import CoreGraphics
         for item in [bystander,remoteA,remoteB] {
             clustered.placements[item.id] = item
         }
-        isolated.document = clustered
+        isolated.stage { $0.document = clustered }
         isolated.refresh()
         precondition(isolated.groups.isEmpty, "Initial proximity must not create groups")
         let firstDrag = CanvasInteractionController(session:isolated)
@@ -37,7 +37,7 @@ import CoreGraphics
         // Sweep across two adjacent items at minimum zoom, then leave both behind.
         let sweep = CanvasFixtures.session().0
         sweep.camera.zoom = CanvasConfiguration.zoom.lowerBound
-        sweep.document = clustered
+        sweep.stage { $0.document = clustered }
         sweep.refresh()
         let sweepDrag = CanvasInteractionController(session:sweep)
         sweepDrag.liftImage(moving.id,point:.zero)
@@ -50,7 +50,7 @@ import CoreGraphics
 
         let dense = CanvasFixtures.session().0
         dense.camera.zoom = CanvasConfiguration.zoom.lowerBound
-        dense.document = CanvasFixtures.make(count:50)
+        dense.stage { $0.document = CanvasFixtures.make(count:50) }
         dense.refresh()
         let middle = dense.document.placements["seed-24"]!
         let denseDrag = CanvasInteractionController(session:dense)
@@ -58,12 +58,12 @@ import CoreGraphics
         for step in 0...200 {
             denseDrag.drag(point:CGPoint(x:0,y:-Double(step)))
             precondition(dense.groups.allSatisfy { $0.contains(middle.id) && $0.count == 2 }, "Dragging through the 50-item layout must not group stationary items")
-            precondition(dense.committedGroups.isEmpty, "Passing over items must not save preview membership")
+            precondition(dense.document.committedGroups.isEmpty, "Passing over items must not save preview membership")
         }
         denseDrag.cancel()
         precondition(dense.groups.isEmpty, "Cancelling a dense sweep must leave no groups")
 
-        session.document = document
+        session.stage { $0.document = document }
         session.refresh()
         let interaction = CanvasInteractionController(session:session)
         interaction.liftImage(moving.id,point:.zero)
@@ -92,12 +92,12 @@ import CoreGraphics
         for zoom in [0.1,1.0,8.0] {
             // Visible pickup edges, rather than the smaller document bounds, trigger the border.
             session.camera.zoom = zoom
-            session.document = document
+            session.stage { $0.document = document }
             session.refresh()
             let lifted = CanvasGeometry.liftedBounds(moving,zoom:zoom)
             var neighbour = target
             neighbour.center = .init(x:lifted.maxX+70/zoom+neighbour.width/2,y:lifted.midY)
-            session.document.placements[target.id] = neighbour
+            session.stage { $0.document.placements[target.id] = neighbour }
             session.refresh()
             interaction.liftImage(moving.id,point:.zero)
             interaction.drag(point:.zero)
@@ -129,7 +129,7 @@ import CoreGraphics
             var neighbour = target
             neighbour.center.x = 120
             let d = CanvasDocument(products:[product.id:product],placements:[moving.id:moving,target.id:neighbour])
-            s.document = d; s.committedGroups = [[moving.id,target.id]]; s.refresh()
+            s.stage { $0.document = d; $0.document.reconcileGroupNames([[moving.id,target.id]]) }; s.refresh()
             let drag = CanvasInteractionController(session:s)
             drag.liftImage(moving.id,point:.zero,timestamp:0)
             drag.drag(point:CGPoint(x:-100,y:0),timestamp:1)
@@ -157,7 +157,7 @@ import CoreGraphics
             drag.cancel()
             precondition(s.groups.count == 1 && s.detachedLinks.isEmpty, "Cancelling a forced release must restore its bonds")
 
-            s.document = d; s.committedGroups = [[moving.id,target.id]]; s.refresh()
+            s.stage { $0.document = d; $0.document.reconcileGroupNames([[moving.id,target.id]]) }; s.refresh()
             drag.liftImage(moving.id,point:.zero,timestamp:0)
             let movement = min(10.0,10/zoom)
             drag.drag(point:CGPoint(x:-movement*zoom,y:0),timestamp:movement*zoom/1200)
@@ -180,7 +180,7 @@ import CoreGraphics
             drag.finish(); s.refresh()
             precondition(s.groups.count == 1 && s.detachedLinks.isEmpty, "Re-forming the pair must persist after release")
 
-            s.document = d; s.committedGroups = [[moving.id,target.id]]; s.detachedLinks = []; s.refresh()
+            s.stage { $0.document = d; $0.document.reconcileGroupNames([[moving.id,target.id]]); $0.detachedLinks = [] }; s.refresh()
             let beforeInwardDrag = s.document // Includes reconciled group names.
             drag.liftImage(moving.id,point:.zero,timestamp:0)
             drag.drag(point:CGPoint(x:movement*zoom,y:0),timestamp:movement*zoom/1200)

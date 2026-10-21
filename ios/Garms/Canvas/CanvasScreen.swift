@@ -83,11 +83,11 @@ struct CanvasScreen: View {
             }) { group in
                 let _ = session.revision
                 CanvasGroupNameDrawer(
-                    group: session.document.namedGroups?.first { $0.id == group.id } ?? group,
+                    group: session.document.namedGroups.first { $0.id == group.id } ?? group,
                     document: session.document,
                     library: session.importedAssets,
                     notes: Binding(
-                        get: { session.document.namedGroups?.first { $0.id == group.id }?.notes ?? "" },
+                        get: { session.document.namedGroups.first { $0.id == group.id }?.notes ?? "" },
                         set: { session.updateGroupNotes(group.id, notes: $0) }
                     ),
                     onOpenItem: { placement in
@@ -114,9 +114,9 @@ struct CanvasScreen: View {
                         ForEach(session.imports.items) { item in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(item.displayName).lineLimit(2)
-                                Text(item.failure ?? (item.stage == .loadingPhoto && item.state == "Processing" ? "Loading photo…" : item.stage == .removingBackground && item.state == "Processing" ? "Removing background…" : item.note ?? item.state)).font(.caption)
+                                Text(item.status).font(.caption)
                                 HStack {
-                                    if item.state == "Failed" { Button("Retry") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
+                                    if case .failed = item.phase { Button("Retry") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
                                     if item.canRetryBackground { Button("Retry background removal") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
                                     Button("Dismiss", role: .destructive) { session.imports.dismiss(item.id) }.buttonStyle(.bordered)
                                 }
@@ -184,7 +184,7 @@ struct CanvasScreen: View {
                 onDelete()
                 session.deleteProduct(product.id)
                 if let group = session.inspectedGroup {
-                    session.inspectedGroup = session.document.namedGroups?.first { $0.id == group.id }
+                    session.inspectedGroup = session.document.namedGroups.first { $0.id == group.id }
                 }
             })
             .presentationDetents([.large])
@@ -272,7 +272,7 @@ private struct CanvasGroupNameDrawer: View {
                                 onOpenItem(placement)
                             } label: {
                                 HStack(spacing: 12) {
-                                    CanvasGroupItemThumbnail(asset: product.asset, library: library)
+                                    CanvasGroupItemThumbnail(asset: product.cutout, library: library)
                                     Text(product.title)
                                         .foregroundStyle(.primary)
                                         .lineLimit(1)

@@ -57,31 +57,31 @@ import UIKit
         let enriched = imported.document.products[productID]!
         imported.undo()
         precondition(imported.document.placements[importedID] == nil && !imported.history.canUndo)
-        precondition(imported.importedAssets.data(for: enriched.asset) == Data([2]))
+        precondition(imported.importedAssets.data(for: enriched.cutout) == Data([2]))
         imported.redo()
         precondition(imported.document.products[productID] == enriched)
         precondition(imported.document.placements[importedID]!.height == 2 * imported.document.placements[importedID]!.width)
         imported.undo()
         imported.move(imported.document.order[0], x: 5, y: 0)
         // The Product's files stay cached: undo history no longer decides what is kept.
-        precondition(!imported.history.canRedo && imported.importedAssets.data(for: enriched.asset) == Data([2]))
+        precondition(!imported.history.canRedo && imported.importedAssets.data(for: enriched.cutout) == Data([2]))
 
         let groupSession = CanvasFixtures.session(laidOut: true).0
-        let group = groupSession.document.namedGroups!.first!
+        let group = groupSession.document.namedGroups.first!
         groupSession.updateGroup(group.id, name: "New", backgroundColour: nil)
         groupSession.updateGroup(group.id, name: "New title", backgroundColour: .init(red: 1, green: 0, blue: 0))
         groupSession.undo()
-        precondition(groupSession.document.namedGroups!.first { $0.id == group.id } == group)
+        precondition(groupSession.document.namedGroups.first { $0.id == group.id } == group)
         precondition(!groupSession.history.canUndo)
         groupSession.redo()
-        precondition(groupSession.document.namedGroups!.first { $0.id == group.id }!.name == "New title")
+        precondition(groupSession.document.namedGroups.first { $0.id == group.id }!.name == "New title")
 
         let noOp = CanvasFixtures.session().0
         noOp.move(noOp.document.order[0], x: 0, y: 0)
         precondition(!noOp.history.canUndo)
         let valid = noOp.document
-        noOp.document.placements[noOp.document.order[0]]!.width = .nan
-        noOp.complete(valid)
+        let invalid = noOp.document.order[0]
+        noOp.edit { $0.document.placements[invalid]!.width = .nan }
         precondition(noOp.document == valid && !noOp.history.canUndo)
 
         print("History checks passed: movement, deletion, branching, camera independence and gesture cancellation.")

@@ -6,21 +6,20 @@ nonisolated struct Product: Codable, Equatable, Identifiable, Sendable {
     var title: String
     var category: String? = nil
     /// File key of the Cutout.
-    var asset: String
+    var cutout: String
     var aspect: Double
-    var product_url: String
+    var sourceUrl: String
     var notes: String? = nil
-    var originalAsset: String? = nil
-    var galleryAssets: [String] = []
+    var original: String? = nil
+    var photos: [String] = []
     var price: Price? = nil
     // Field names on the wire, so the document's rows are also the change set's rows.
     enum CodingKeys: String, CodingKey {
-        case id = "key", title, category, asset = "cutout", aspect, product_url = "sourceUrl", notes,
-             originalAsset = "original", galleryAssets = "photos", price
+        case id = "key", title, category, cutout, aspect, sourceUrl, notes, original, photos, price
     }
     var detailAssets: [String] {
         var seen: Set<String> = []
-        return ([asset, originalAsset].compactMap { $0 } + galleryAssets).filter { seen.insert($0).inserted }
+        return ([cutout, original].compactMap { $0 } + photos).filter { seen.insert($0).inserted }
     }
 
     func matchesSearch(_ query: String) -> Bool {
@@ -89,6 +88,24 @@ nonisolated struct StickerPlacement: Codable, Equatable, Identifiable, Sendable 
         width = aspect >= 1 ? edge : edge * aspect
         height = aspect >= 1 ? edge / aspect : edge
     }
+    // Stored as a flat row: key, product, x, y, width, height, z.
+    enum CodingKeys: String, CodingKey { case id = "key", productID = "product", x, y, width, height, z }
+    init(id: String = UUID().uuidString, productID: String, center: WorldPoint, width: Double, height: Double, z: String) {
+        self.id = id; self.productID = productID; self.center = center; self.width = width; self.height = height; self.z = z
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(String.self, forKey: .id), productID: try c.decode(String.self, forKey: .productID),
+                  center: WorldPoint(x: try c.decode(Double.self, forKey: .x), y: try c.decode(Double.self, forKey: .y)),
+                  width: try c.decode(Double.self, forKey: .width), height: try c.decode(Double.self, forKey: .height),
+                  z: try c.decode(String.self, forKey: .z))
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(productID, forKey: .productID)
+        try c.encode(center.x, forKey: .x); try c.encode(center.y, forKey: .y)
+        try c.encode(width, forKey: .width); try c.encode(height, forKey: .height); try c.encode(z, forKey: .z)
+    }
     var valid: Bool {
         center.valid && width.isFinite && height.isFinite && width > 0 && height > 0 &&
         CanvasConfiguration.edge.contains(max(width,height))
@@ -129,7 +146,7 @@ nonisolated struct CanvasNamedGroup: Codable, Equatable, Identifiable, Sendable 
 
 // Membership is derived from positions; titles follow the largest surviving overlap.
 nonisolated struct CanvasDocument: Codable, Equatable, Sendable {
-    var namedGroups: [CanvasNamedGroup]? = nil
+    var namedGroups: [CanvasNamedGroup] = []
     var products: [String: Product] = [:]
     var placements: [String: StickerPlacement] = [:]
     /// Sticker ids from bottom to top.
@@ -138,6 +155,10 @@ nonisolated struct CanvasDocument: Codable, Equatable, Sendable {
         placements.values.sorted { ($0.z, $0.id) < ($1.z, $1.id) }.map(\.id)
     }
     /// A stacking key above every Sticker on the Canvas.
+    /// Membership in the form proximity grouping continues from.
+    var committedGroups: [[String]] {
+        namedGroups.filter { $0.members.count > 1 || $0.isRecentUploads && !$0.members.isEmpty }.map(\.members)
+    }
     var topZ: String { CanvasStacking.after(placements.values.map(\.z).max()) }
     func validate() throws {
         guard products.allSatisfy({ $0.key == $0.value.id && $0.value.aspect.isFinite && $0.value.aspect > 0 }),
@@ -175,7 +196,7 @@ extension CanvasDocument {
     }
 
     mutating func reconcileGroupNames(_ groups: [[String]]) {
-        let previous = namedGroups ?? []
+        let previous = namedGroups
         // Match the largest overlap first so a small split cannot steal the title.
         let candidates = groups.indices.flatMap { newIndex in
             previous.indices.compactMap { oldIndex -> (new: Int, old: Int, overlap: Int)? in
@@ -210,10 +231,27 @@ extension CanvasDocument {
             return CanvasNamedGroup(members: groups[index], name: name)
         }
         if let recent = previous.first(where: \.isRecentUploads),
-           namedGroups?.contains(where: \.isRecentUploads) != true {
+           !namedGroups.contains(where: \.isRecentUploads) {
             var empty = recent
             empty.members = []
-            namedGroups?.append(empty)
+            namedGroups.append(empty)
         }
+    }
+
+    /// Places a Sticker of `productID` at the end of Recent uploads, or at `fallback` when it is empty and unplaced.
+    mutating func addToRecentUploads(productID: String, aspect: Double, fallback: WorldPoint) -> String? {
+        guard let recentIndex = namedGroups.firstIndex(where: \.isRecentUploads) else { return nil }
+        let recent = namedGroups[recentIndex]
+        let edge = CanvasConfiguration.initialImageEdge
+        let width = aspect >= 1 ? edge : edge * aspect
+        let height = aspect >= 1 ? edge / aspect : edge
+        let bounds = recent.bounds(in: self)
+        let center = recent.members.isEmpty || bounds.isNull ? recent.emptyCenter ?? fallback
+            : WorldPoint(x: bounds.maxX + CanvasConfiguration.magneticRestGap + width / 2, y: bounds.midY)
+        let placement = StickerPlacement(productID: productID, center: center, width: width, height: height, z: topZ)
+        placements[placement.id] = placement
+        namedGroups[recentIndex].members.append(placement.id)
+        namedGroups[recentIndex].emptyCenter = center
+        return placement.id
     }
 }

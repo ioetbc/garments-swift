@@ -71,7 +71,6 @@ export const changeSet = v.object({
 export const importedProduct = v.object({
   url: v.string(),
   title: v.union(v.string(), v.null()),
-  imageURL: v.union(v.string(), v.null()),
   imageURLs: v.array(v.string()),
   price: v.union(price, v.null()),
 });

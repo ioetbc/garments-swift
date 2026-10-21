@@ -37,7 +37,7 @@ import UIKit
     /// Imports one photo and waits until it is on the Canvas.
     @MainActor static func importPhoto(_ coordinator: ImportCoordinator, _ session: CanvasSession) async throws -> Product {
         coordinator.importPhoto(title: "Imported photo 1") { screenshot.data }
-        try await waitFor { coordinator.items.first?.state == "Ready" }
+        try await waitFor { coordinator.items.first?.phase.isReady == true }
         return session.document.products[session.document.placements[coordinator.items[0].placementID!]!.productID]!
     }
 
@@ -49,8 +49,8 @@ import UIKit
             let product = try await importPhoto(coordinator, session)
             try await waitFor { searched.count == 1 }
             try await Task.sleep(for: .milliseconds(30))
-            precondition(searched[0].data == session.importedAssets.data(for: product.originalAsset ?? product.asset))
-            precondition(session.document.products[product.id] == product && product.product_url.isEmpty)
+            precondition(searched[0].data == session.importedAssets.data(for: product.original ?? product.cutout))
+            precondition(session.document.products[product.id] == product && product.sourceUrl.isEmpty)
             precondition(coordinator.items.count == 1 && coordinator.pendingCount == 0)
         }
         // A found listing is imported onto the Product straight away, where its Sticker stands.
@@ -58,18 +58,18 @@ import UIKit
             var fetched: [String] = [], downloads: [String] = []
             let (session, coordinator, _) = imports(search: { _ in jacket }, fetch: { url in
                 fetched.append(url)
-                return .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg",
+                return .init(url: url, title: "Red Jacket",
                              imageURLs: ["https://cdn.example/1.jpg", "https://cdn.example/2.jpg"], price: Price(amount: 4500, currency: "GBP"))
             }, image: { downloads.append($0); return listing })
             let product = try await importPhoto(coordinator, session)
             let sticker = session.document.placements.values.first { $0.productID == product.id }!
-            try await waitFor { session.document.products[product.id]?.product_url == jacket.url }
+            try await waitFor { session.document.products[product.id]?.sourceUrl == jacket.url }
             let done = session.document.products[product.id]!
             precondition(fetched == [jacket.url] && downloads == ["https://cdn.example/1.jpg", "https://cdn.example/2.jpg"])
             precondition(done.title == "Red Jacket" && done.price == Price(amount: 4500, currency: "GBP"))
             // The photo's art stays; the listing's images become Photos after it.
-            precondition(done.asset == product.asset && done.originalAsset == product.originalAsset && done.aspect == product.aspect)
-            precondition(done.galleryAssets.count == 3 && done.galleryAssets[0] == product.originalAsset)
+            precondition(done.cutout == product.cutout && done.original == product.original && done.aspect == product.aspect)
+            precondition(done.photos.count == 3 && done.photos[0] == product.original)
             precondition(session.document.placements[sticker.id] == sticker)
             try await waitFor { coordinator.pendingCount == 0 }
             session.undo()
@@ -82,23 +82,23 @@ import UIKit
             let (session, coordinator, _) = imports(search: { _ in jacket }, fetch: { url in
                 attempts += 1
                 if attempts == 1 { throw URLError(.badServerResponse) }
-                return .init(url: url, title: "Red Jacket", imageURL: "https://cdn.example/1.jpg")
+                return .init(url: url, title: "Red Jacket", imageURLs: ["https://cdn.example/1.jpg"])
             })
             let product = try await importPhoto(coordinator, session)
-            try await waitFor { coordinator.items.last?.state == "Failed" }
+            try await waitFor { if case .failed = coordinator.items.last?.phase { true } else { false } }
             precondition(session.document.products[product.id] == product && coordinator.pendingCount == 1)
             coordinator.retry(coordinator.items.last!.id)
-            try await waitFor { session.document.products[product.id]?.product_url == jacket.url }
+            try await waitFor { session.document.products[product.id]?.sourceUrl == jacket.url }
             try await waitFor { coordinator.pendingCount == 0 }
         }
         // Shared links are not searched, and record the page's Price.
         do {
             let (session, coordinator, inbox) = imports(search: { _ in preconditionFailure("Links are not searched") }, fetch: { url in
-                .init(url: url, title: "Coat", imageURL: "https://cdn.example/1.jpg", price: Price(amount: 9900, currency: "EUR"))
+                .init(url: url, title: "Coat", imageURLs: ["https://cdn.example/1.jpg"], price: Price(amount: 9900, currency: "EUR"))
             })
             try inbox.enqueue(SharedImport(url: "https://shop.example/coat"))
             coordinator.checkInbox()
-            try await waitFor { coordinator.items.first?.state == "Ready" }
+            try await waitFor { coordinator.items.first?.phase.isReady == true }
             let sticker = session.document.placements[coordinator.items[0].placementID!]!
             precondition(session.document.products[sticker.productID]?.price == Price(amount: 9900, currency: "EUR"))
         }

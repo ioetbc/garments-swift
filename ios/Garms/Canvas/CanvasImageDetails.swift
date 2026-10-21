@@ -18,8 +18,8 @@ struct CanvasImageDetails: View {
                     Section {
                         TabView {
                             ForEach(Array(product.detailAssets.enumerated()), id: \.element) { index, asset in
-                                let label = asset == product.asset ? (product.originalAsset == nil || product.originalAsset == asset ? nil : "Cutout")
-                                    : asset == product.originalAsset ? "Original" : "Photo"
+                                let label = asset == product.cutout ? (product.original == nil || product.original == asset ? nil : "Cutout")
+                                    : asset == product.original ? "Original" : "Photo"
                                 CanvasDetailsImagePage(asset: asset, library: library, label: label,
                                     accessibility: "\(product.title), \(label ?? "image") \(index + 1) of \(product.detailAssets.count)")
                             }
@@ -38,9 +38,9 @@ struct CanvasImageDetails: View {
                             .textInputAutocapitalization(.words)
                             .accessibilityLabel("Category")
                         CanvasPriceField(price: $price)
-                        if !product.product_url.isEmpty {
+                        if !product.sourceUrl.isEmpty {
                             LabeledContent("URL") {
-                                if let url = URL(string: product.product_url) {
+                                if let url = URL(string: product.sourceUrl) {
                                     Link(destination: url) {
                                         Text(url.absoluteString)
                                             .lineLimit(1)

@@ -2,7 +2,8 @@ import SwiftUI
 import Observation
 
 @Observable @MainActor final class CanvasSession {
-    @ObservationIgnored var document = CanvasDocument()
+    /// Changes only through `edit`, or `stage` for a gesture's uncommitted frames.
+    @ObservationIgnored private(set) var document = CanvasDocument()
     @ObservationIgnored var camera = CanvasCamera()
     @ObservationIgnored var viewport = CGSize.zero
     var hasInitialLayout: Bool { hasLoaded && viewport.width > 0 && viewport.height > 0 }
@@ -16,8 +17,8 @@ import Observation
     static let offlineMessage = "You're offline, so the canvas is read-only. Your changes can't be saved until you reconnect."
     @ObservationIgnored let index = CanvasSpatialIndex()
     @ObservationIgnored var groups: [[String]] = []
-    @ObservationIgnored var committedGroups: [[String]] = []
-    @ObservationIgnored var detachedLinks: Set<CanvasGroupLink> = []
+    @ObservationIgnored private(set) var detachedLinks: Set<CanvasGroupLink> = []
+    // ponytail: presentation-only, never saved or recorded, so the gesture sets these directly.
     @ObservationIgnored var elasticLink: (moving: String, target: String)?
     @ObservationIgnored var groupingPreview: (moving: String, target: String)?
     @ObservationIgnored var render: (() -> Void)?
@@ -46,7 +47,7 @@ import Observation
     @ObservationIgnored private(set) var dimmedGroupIDs: Set<String> = []
 
     private func updateSearchMatches() {
-        let namedGroups = document.namedGroups ?? []
+        let namedGroups = document.namedGroups
         guard !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             dimmedPlacementIDs = []
             dimmedGroupIDs = []
@@ -88,13 +89,12 @@ import Observation
             hasLoaded = true
         }
         let incoming = remote.document
-        if incoming != document || remote.links != detachedLinks {
-            document = incoming
-            committedGroups = remote.committedGroups
-            detachedLinks = remote.links
+        if incoming != document || remote.detachedLinks != detachedLinks {
+            for id in document.placements.keys where incoming.placements[id] == nil { imports.deleted(id) }
+            load(CanvasSnapshot(document: incoming, detachedLinks: remote.detachedLinks))
             elasticLink = nil
             groupingPreview = nil
-            if let group = inspectedGroup { inspectedGroup = document.namedGroups?.first { $0.id == group.id } }
+            if let group = inspectedGroup { inspectedGroup = document.namedGroups.first { $0.id == group.id } }
         }
         refresh()
         imports.start()
@@ -105,8 +105,8 @@ import Observation
         return isOnline
     }
     /// Sends the rows that changed since `before`. Last write wins per row.
-    private func save(from before: CanvasDocument, _ beforeLinks: Set<CanvasGroupLink>) {
-        let changes = CanvasChangeSet(from: before, beforeLinks, to: document, detachedLinks)
+    private func save(from before: CanvasSnapshot) {
+        let changes = CanvasChangeSet(from: before.document, before.detachedLinks, to: document, detachedLinks)
         guard !changes.isEmpty else { return }
         sync.apply(changes) { [weak self] failure in
             if let failure { self?.error = "Your last change couldn't be saved, so this canvas may not match your other devices. \(failure.localizedDescription)" }
@@ -121,43 +121,38 @@ import Observation
             return CanvasGeometry.distance(a.bounds,b.bounds) <= CanvasConfiguration.detachRadius
         }
         // A preview is presentation state, never membership for the next drag frame.
-        committedGroups = CanvasProximity.groups(document:document,index:index,preview:elasticLink,previous:committedGroups,detached:detachedLinks)
-        groups = CanvasProximity.groups(document:document,index:index,preview:elasticLink ?? groupingPreview,previous:committedGroups,detached:detachedLinks)
-        document.reconcileGroupNames(committedGroups)
+        let committed = CanvasProximity.groups(document:document,index:index,preview:elasticLink,previous:document.committedGroups,detached:detachedLinks)
+        groups = CanvasProximity.groups(document:document,index:index,preview:elasticLink ?? groupingPreview,previous:committed,detached:detachedLinks)
+        document.reconcileGroupNames(committed)
         updateSearchMatches()
         render?()
     }
     func inspectGroup(_ id: String) {
         resolveInteraction?()
         inspectedPlacement = nil
-        inspectedGroup = document.namedGroups?.first { $0.id == id }
+        inspectedGroup = document.namedGroups.first { $0.id == id }
     }
     func updateGroup(_ id: String, name: String, backgroundColour: CanvasGroupColour?) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let index = document.namedGroups?.firstIndex(where: { $0.id == id }) else { return }
-        var group = document.namedGroups![index]
-        // Keep the last valid title while the field is cleared for replacement.
-        if !trimmed.isEmpty { group.name = String(trimmed.prefix(60)) }
-        group.backgroundColour = backgroundColour
-        guard group != document.namedGroups![index], editable() else { return }
-        let before = snapshot()
-        document.namedGroups?[index] = group
-        refresh()
-        history.record(before: before, after: snapshot(), key: "group-" + id)
-        save(from: before.document, before.detachedLinks)
+        editGroup(id, key: "group-") { group in
+            // Keep the last valid title while the field is cleared for replacement.
+            if !trimmed.isEmpty { group.name = String(trimmed.prefix(60)) }
+            group.backgroundColour = backgroundColour
+        }
+    }
+    func updateGroupNotes(_ id: String, notes: String) {
+        editGroup(id, key: "group-notes-") { $0.notes = notes.isEmpty ? nil : notes }
+    }
+    private func editGroup(_ id: String, key: String, _ change: (inout CanvasNamedGroup) -> Void) {
+        edit(history: .record(key: key + id)) { snapshot in
+            if let index = snapshot.document.namedGroups.firstIndex(where: { $0.id == id }) { change(&snapshot.document.namedGroups[index]) }
+        }
     }
     /// One edit to a Product's own fields, shown on every Sticker of it. Edits with the same key coalesce in undo.
     func editProduct(_ id: String, key: String, _ change: (inout Product) -> Void) {
-        guard var product = document.products[id] else { return }
-        change(&product)
-        guard product != document.products[id], editable() else { return }
-        let before = snapshot()
-        document.products[id] = product
-        revision &+= 1
-        updateSearchMatches()
-        render?()
-        history.record(before: before, after: snapshot(), key: key + id)
-        save(from: before.document, before.detachedLinks)
+        edit(history: .record(key: key + id)) { snapshot in
+            if snapshot.document.products[id] != nil { change(&snapshot.document.products[id]!) }
+        }
     }
     func updateProductNotes(_ id: String, notes: String) {
         editProduct(id, key: "product-notes-") { $0.notes = notes.isEmpty ? nil : notes }
@@ -175,16 +170,6 @@ import Observation
         editProduct(id, key: "product-price-") { $0.price = price }
     }
 
-    func updateGroupNotes(_ id: String, notes: String) {
-        guard let index = document.namedGroups?.firstIndex(where: { $0.id == id }),
-              document.namedGroups?[index].notes ?? "" != notes, editable() else { return }
-        let before = snapshot()
-        document.namedGroups?[index].notes = notes.isEmpty ? nil : notes
-        revision &+= 1
-        history.record(before: before, after: snapshot(), key: "group-notes-" + id)
-        save(from: before.document, before.detachedLinks)
-    }
-
     func select(_ id: String?, showDetails: Bool = false) {
         selection = id
         inspectedPlacement = showDetails ? id.flatMap { document.placements[$0] } : nil
@@ -193,10 +178,8 @@ import Observation
     func deletePlacement(_ id: String) {
         resolveInteraction?()
         guard document.placements[id] != nil else { return }
-        let before = document
         // The Product stays; sharing its link again places it again.
-        document.placements[id] = nil
-        complete(before)
+        edit { $0.document.placements[id] = nil }
         if document.placements[id] == nil { imports.deleted(id) }
     }
     /// Deletes the Product, every Sticker of it and its stored files. Not undoable: the files are gone.
@@ -206,8 +189,7 @@ import Observation
         let removed = Set(document.placements.values.filter { $0.productID == id }.map(\.id))
         document.products[id] = nil
         for placement in removed { document.placements[placement] = nil; imports.deleted(placement) }
-        for index in (document.namedGroups ?? []).indices { document.namedGroups?[index].members.removeAll(where: removed.contains) }
-        committedGroups = committedGroups.map { $0.filter { !removed.contains($0) } }
+        for index in document.namedGroups.indices { document.namedGroups[index].members.removeAll(where: removed.contains) }
         detachedLinks = detachedLinks.filter { !removed.contains($0.first) && !removed.contains($0.second) }
         inspectedPlacement = nil
         refresh()
@@ -221,57 +203,50 @@ import Observation
     func placeSticker(of productID: String) -> String? {
         guard hasInitialLayout, let product = document.products[productID] else { return nil }
         resolveInteraction?()
-        let before = document
-        let baseline = snapshot()
-        guard let id = addToRecentUploads(productID: productID, aspect: product.aspect) else { return nil }
-        complete(before, baseline: baseline)
-        guard document.placements[id] != nil else { return nil }
-        searchQuery = ""
+        guard let id = edit({ $0.document.addToRecentUploads(productID: productID, aspect: product.aspect, fallback: camera.center) }),
+              document.placements[id] != nil else { return nil }
         revealImport(id)
         return id
     }
-    private func addToRecentUploads(productID: String, aspect: Double) -> String? {
-        guard let recentIndex = document.namedGroups?.firstIndex(where: \.isRecentUploads),
-              let recent = document.namedGroups?[recentIndex] else { return nil }
-        let edge = CanvasConfiguration.initialImageEdge
-        let width = aspect >= 1 ? edge : edge * aspect
-        let height = aspect >= 1 ? edge / aspect : edge
-        let bounds = recent.bounds(in: document)
-        let center = recent.members.isEmpty || bounds.isNull ? recent.emptyCenter ?? camera.center
-            : WorldPoint(x: bounds.maxX + CanvasConfiguration.magneticRestGap + width / 2, y: bounds.midY)
-        let placement = StickerPlacement(productID: productID, center: center, width: width, height: height, z: document.topZ)
-        document.placements[placement.id] = placement
-        document.namedGroups?[recentIndex].members.append(placement.id)
-        document.namedGroups?[recentIndex].emptyCenter = center
-        committedGroups.removeAll { group in group.contains(where: recent.members.contains) }
-        committedGroups.append(recent.members + [placement.id])
-        return placement.id
+    func snapshot() -> CanvasSnapshot {
+        CanvasSnapshot(document: document, detachedLinks: detachedLinks)
     }
-    func snapshot(document: CanvasDocument? = nil) -> CanvasSnapshot {
-        CanvasSnapshot(document: document ?? self.document, groups: committedGroups,
-                       detachedLinks: detachedLinks)
+    private func load(_ snapshot: CanvasSnapshot) {
+        document = snapshot.document
+        detachedLinks = snapshot.detachedLinks
     }
-    func complete(_ before: CanvasDocument, baseline: CanvasSnapshot? = nil, recordHistory: Bool = true) {
-        let previous = baseline ?? snapshot(document: before)
-        guard isOnline else {
-            document = before
-            committedGroups = previous.groups
-            detachedLinks = previous.detachedLinks
-            error = Self.offlineMessage
-            refresh()
-            return
-        }
-        do { try document.validate() }
-        catch {
-            document = before
-            self.error = error.localizedDescription
-            refresh()
-            return
-        }
+    /// A gesture's uncommitted frame: shown, but neither saved nor recorded until the gesture ends with `edit(from:)`.
+    func stage(_ change: (inout CanvasSnapshot) -> Void) {
+        var next = snapshot()
+        change(&next)
+        load(next)
+    }
+    enum EditHistory {
+        /// A new undo step; consecutive edits with the same key coalesce.
+        case record(key: String? = nil)
+        /// Async import enrichment, carried into existing undo steps instead of adding one.
+        case enrich
+        case none
+    }
+    /// The one way Canvas state is committed. Offline or invalid, the Canvas returns to `baseline`
+    /// (the current state, unless a gesture staged frames since); otherwise it refreshes, records and saves.
+    @discardableResult
+    func edit<T>(history: EditHistory = .record(), from baseline: CanvasSnapshot? = nil, _ mutate: (inout CanvasSnapshot) -> T) -> T {
+        let before = baseline ?? snapshot()
+        var next = snapshot()
+        let result = mutate(&next)
+        if baseline == nil && next == before { return result }
+        if !isOnline { error = Self.offlineMessage; next = before }
+        do { try next.document.validate() } catch { self.error = error.localizedDescription; next = before }
+        load(next)
         refresh()
-        if recordHistory { history.record(before: previous, after: snapshot()) }
-        else { history.enrichImport(from: before, to: document) }
-        save(from: previous.document, previous.detachedLinks)
+        switch history {
+        case .record(let key): self.history.record(before: before, after: snapshot(), key: key)
+        case .enrich: self.history.enrichImport(from: before.document, to: document)
+        case .none: break
+        }
+        save(from: before)
+        return result
     }
     func undo() {
         resolveInteraction?()
@@ -287,92 +262,18 @@ import Observation
         for id in document.placements.keys where state.document.placements[id] == nil {
             imports.deleted(id)
         }
-        let before = snapshot()
-        document = state.document
-        committedGroups = state.groups
-        detachedLinks = state.detachedLinks
         elasticLink = nil
         groupingPreview = nil
         inspectedPlacement = nil
         inspectedGroup = nil
-        refresh()
         // Undo and redo sync like any other edit.
-        save(from: before.document, before.detachedLinks)
+        edit(history: .none) { $0 = state }
     }
     func revealImport(_ id: String) {
         resolveInteraction?()
         searchQuery = ""
         if let placement = document.placements[id] { camera.center = placement.center; cameraChanged() }
         select(id)
-    }
-    func insertImport(_ record: SharedImport, artwork: ImportedImageDownload.Artwork) -> String? {
-        guard hasInitialLayout, artwork.aspect.isFinite, artwork.aspect > 0 else { return nil }
-        resolveInteraction?()
-        guard document.namedGroups?.contains(where: \.isRecentUploads) == true else { return nil }
-        let before = document
-        let baseline = snapshot()
-        let productID = UUID().uuidString
-        let asset = importedAssets.insert(artwork.data)
-        document.products[productID] = Product(id: productID, title: record.suggestedTitle ?? URL(string: record.url)?.host ?? "Saved link", asset: asset, aspect: artwork.aspect, product_url: record.url)
-        guard let id = addToRecentUploads(productID: productID, aspect: artwork.aspect) else { return nil }
-        complete(before, baseline: baseline)
-        guard document.placements[id] != nil else { return nil }
-        searchQuery = ""
-        revealImport(id)
-        return id
-    }
-    @discardableResult
-    func appendImportPhoto(_ id: String, artwork: ImportedImageDownload.Artwork) -> String? {
-        guard let placement = document.placements[id], var product = document.products[placement.productID],
-              artwork.aspect.isFinite, artwork.aspect > 0 else { return nil }
-        let before = document
-        let asset = importedAssets.insert(artwork.data)
-        product.galleryAssets.append(asset)
-        document.products[product.id] = product
-        complete(before, recordHistory: false)
-        return document.products[product.id] == product ? asset : nil
-    }
-    @discardableResult
-    func installImportOriginal(_ id: String, title: String?, price: Price?, artwork: ImportedImageDownload.Artwork) -> String? {
-        updateImport(id, title: title, price: price, artwork: artwork, original: true)
-    }
-    @discardableResult
-    func applyImportCutout(_ id: String, artwork: ImportedImageDownload.Artwork) -> String? {
-        guard let placement = document.placements[id], document.products[placement.productID]?.originalAsset != nil else { return nil }
-        return updateImport(id, title: nil, price: nil, artwork: artwork, original: false)
-    }
-    @discardableResult
-    func updateImport(_ id: String, title: String?, price: Price?, artwork: ImportedImageDownload.Artwork?, original: Bool = true) -> String? {
-        guard document.placements[id] != nil else { return nil }
-        resolveInteraction?()
-        guard let placement = document.placements[id], var product = document.products[placement.productID] else { return nil }
-        if let artwork { guard artwork.aspect.isFinite, artwork.aspect > 0 else { return nil } }
-        let before = document
-        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { product.title = title }
-        if let price { product.price = price }
-        if let artwork {
-            product.asset = importedAssets.insert(artwork.data)
-            if original { product.originalAsset = product.asset }
-            product.aspect = artwork.aspect
-            // Every Sticker shows the Product's image, so each keeps its centre and longest edge at the new aspect.
-            for (sticker, shown) in document.placements where shown.productID == product.id {
-                document.placements[sticker]?.fit(aspect: artwork.aspect)
-            }
-        }
-        document.products[product.id] = product
-        complete(before, recordHistory: false)
-        return document.products[product.id] == product ? product.asset : nil
-    }
-    /// Records the listing found for an imported photo once it has been imported onto the Product like a shared link,
-    /// keeping the photo as the first Photo.
-    func attachListing(_ productID: String, url: String, screenshot: String) {
-        guard var product = document.products[productID] else { return }
-        resolveInteraction?()
-        let before = document
-        product.product_url = url
-        product.galleryAssets.insert(screenshot, at: 0)
-        document.products[productID] = product
-        complete(before, recordHistory: false)
     }
     /// Panning and zooming render immediately and save the Viewport once it settles, outside undo.
     func cameraChanged() {

@@ -4,7 +4,6 @@ import Observation
 /// Canvas-only state. Navigation, selection and tool preferences deliberately live outside history.
 struct CanvasSnapshot: Equatable {
     var document: CanvasDocument
-    var groups: [[String]]
     var detachedLinks: Set<CanvasGroupLink>
 }
 

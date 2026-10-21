@@ -22,7 +22,7 @@ import UIKit
         let artwork = ImportedImageDownload.Artwork(data: png, aspect: 0.5)
         precondition(session.insertImport(record, artwork: artwork) == nil)
         session.updateViewport(CGSize(width: 390, height: 844))
-        let initialGroup = session.document.namedGroups!.first(where: \.isRecentUploads)!
+        let initialGroup = session.document.namedGroups.first(where: \.isRecentUploads)!
         precondition(initialGroup.name == "Recent uploads" && initialGroup.members.isEmpty)
         precondition(initialGroup.backgroundColour == .init(red: 0.22, green: 1, blue: 0.08))
         let baseline = session.document.order.count
@@ -30,26 +30,26 @@ import UIKit
         let coordinator = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
             requests += 1
             try await Task.sleep(for: .milliseconds(20))
-            return .init(url: url, title: "Imported jacket", imageURL: "https://cdn.example/image.png")
+            return .init(url: url, title: "Imported jacket", imageURLs: ["https://cdn.example/image.png"])
         }, image: { _ in artwork }, cutout: { _ in nil })
         try inbox.enqueue(record)
         try inbox.enqueue(SharedImport(url: record.url))
         try Data("bad".utf8).write(to: directory.appendingPathComponent("bad.json"))
         coordinator.checkInbox(); coordinator.checkInbox()
-        try await waitFor { coordinator.items.first?.state == "Ready" }
+        try await waitFor { coordinator.items.first?.phase.isReady == true }
         precondition(requests == 1 && session.document.order.count == baseline + 1)
-        precondition(coordinator.items.count == 1 && coordinator.items[0].state == "Ready")
+        precondition(coordinator.items.count == 1 && coordinator.items[0].phase.isReady)
         let remaining = try inbox.files(); precondition(remaining.isEmpty)
         let placementID = coordinator.items[0].placementID!
-        precondition(session.document.namedGroups!.first(where: \.isRecentUploads)!.members == [placementID])
+        precondition(session.document.namedGroups.first(where: \.isRecentUploads)!.members == [placementID])
         let placement = session.document.placements[placementID]!
         let product = session.document.products[placement.productID]!
         precondition(product.title == "Imported jacket" && product.price == nil)
-        let data = session.importedAssets.data(for: product.asset)!
+        let data = session.importedAssets.data(for: product.cutout)!
         let decoded = CanvasImageWorker.decode(data: data, tier: 192)!
         precondition(decoded.width > 0)
         let store = CanvasAssetStore(); store.library = session.importedAssets
-        let key = CanvasAssetStore.Key(asset: product.asset, tier: 192)
+        let key = CanvasAssetStore.Key(asset: product.cutout, tier: 192)
         store.needed = [key]; _ = store.image(key); store.reconcile()
         try await Task.sleep(for: .milliseconds(80))
         precondition(store.image(key) != nil)
@@ -57,7 +57,7 @@ import UIKit
         store.needed = [key]; _ = store.image(key); store.reconcile()
         try await Task.sleep(for: .milliseconds(80))
         precondition(store.image(key) != nil)
-        session.document.placements[placementID]?.center = WorldPoint(x: 750, y: 600)
+        session.stage { $0.document.placements[placementID]?.center = WorldPoint(x: 750, y: 600) }
         session.updateImport(placementID, title: "Updated", price: nil, artwork: .init(data: data, aspect: 0.5))
         let updated = session.document.placements[placementID]!
         precondition(updated.center == WorldPoint(x: 750, y: 600))
@@ -74,10 +74,10 @@ import UIKit
         var calls = 0
         let paused = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
             calls += 1
-            return .init(url: url, title: "Late", imageURL: nil)
+            return .init(url: url, title: "Late")
         })
         try inbox.enqueue(second); paused.checkInbox()
-        try await waitFor { paused.items.first?.state == "Failed" }
+        try await waitFor { if case .failed = paused.items.first?.phase { true } else { false } }
         precondition(calls == 1 && paused.items[0].placementID == nil)
         precondition(session.document.order.count == baseline)
         precondition(paused.progress == nil)
@@ -96,14 +96,14 @@ import UIKit
             active += 1; peak = max(peak, active)
             defer { active -= 1 }
             try await Task.sleep(for: .milliseconds(10))
-            return .init(url: url, title: "Ready product", imageURL: "https://cdn.example/image.png")
+            return .init(url: url, title: "Ready product", imageURLs: ["https://cdn.example/image.png"])
         }, image: { _ in .init(data: data, aspect: 0.5) }, cutout: { _ in nil })
         ready.checkInbox()
         precondition(readySession.document.order.count == readyCount)
         precondition(ready.progress?.current == 1 && ready.progress?.total == 2)
-        try await waitFor { ready.items.allSatisfy { $0.state == "Ready" } }
+        try await waitFor { ready.items.allSatisfy { $0.phase.isReady } }
         precondition(peak == 1)
-        let uploads = readySession.document.namedGroups!.first(where: \.isRecentUploads)!
+        let uploads = readySession.document.namedGroups.first(where: \.isRecentUploads)!
         precondition(Set(uploads.members) == Set(ready.items.compactMap(\.placementID)))
         let roundTrip = try JSONDecoder().decode(CanvasDocument.self, from: JSONEncoder().encode(readySession.document))
         precondition(roundTrip.namedGroups == readySession.document.namedGroups)
@@ -118,7 +118,7 @@ import UIKit
         readySession.deletePlacement(saved)
         try inbox.enqueue(SharedImport(url: ready.items[0].record.url))
         ready.checkInbox()
-        try await waitFor { ready.items.allSatisfy { $0.state == "Ready" } }
+        try await waitFor { ready.items.allSatisfy { $0.phase.isReady } }
         precondition(readySession.document.order.count == readyCount + 2 && readySession.document.products.count == productCount)
         precondition(readySession.document.placements.values.contains { $0.productID == savedProduct })
         try readySession.document.validate()
@@ -128,9 +128,9 @@ import UIKit
         let failingRemoval = ImportCoordinator(session: session, inbox: inbox, acknowledge: { _ in
             removals += 1
             throw URLError(.cannotRemoveFile)
-        }, fetch: { url in .init(url: url, title: nil, imageURL: nil) })
+        }, fetch: { url in .init(url: url, title: nil) })
         failingRemoval.checkInbox(); failingRemoval.checkInbox()
-        try await waitFor { failingRemoval.items.first?.state == "Failed" }
+        try await waitFor { if case .failed = failingRemoval.items.first?.phase { true } else { false } }
         precondition(removals == 2 && failingRemoval.items.count == 1)
         precondition(tryCount(inbox) == 1)
         let testSession = CanvasFixtures.session(sized: false).0
@@ -138,7 +138,7 @@ import UIKit
         let testInbox = SharedImportInbox(directoryOverride: directory.appendingPathComponent("test-links"))
         let testImports = ImportCoordinator(session: testSession, inbox: testInbox, fetch: { url in
             testFetches += 1
-            return .init(url: url, title: "Test import", imageURL: "https://cdn.example/test.png")
+            return .init(url: url, title: "Test import", imageURLs: ["https://cdn.example/test.png"])
         }, image: { _ in
             testImages += 1
             return .init(data: data, aspect: 0.5)
@@ -154,7 +154,7 @@ import UIKit
         testSession.updateViewport(CGSize(width: 390, height: 844))
         let testBaseline = testSession.document.order.count
         testImports.start()
-        try await waitFor { testImports.items.first?.state == "Ready" }
+        try await waitFor { testImports.items.first?.phase.isReady == true }
         precondition(testFetches == 1 && testImages == 1 && testCutouts == 1)
         precondition(testSession.document.order.count == testBaseline + 1)
         // Sharing it again shows the saved item instead of importing a copy.
@@ -168,7 +168,7 @@ import UIKit
         let batchInbox = SharedImportInbox(directoryOverride: directory.appendingPathComponent("batch"))
         let batch = ImportCoordinator(session: batchSession,
             inbox: batchInbox,
-            fetch: { url in .init(url: url, title: "Batch product", imageURL: "https://cdn.example/image.png") },
+            fetch: { url in .init(url: url, title: "Batch product", imageURLs: ["https://cdn.example/image.png"]) },
             image: { _ in artwork }, cutout: { _ in
                 await withCheckedContinuation { pending = $0 }
             })
@@ -180,7 +180,7 @@ import UIKit
             try await waitFor { pending != nil }
             let progress = batch.progress!
             precondition(progress.current == number && progress.total == 4)
-            precondition(progress.item.stage == .removingBackground)
+            precondition(progress.item.phase == .processing(.removingBackground))
             let thumbnail = progress.item.checkpoint!.asset
             precondition(batchSession.importedAssets.data(for: thumbnail) == png)
             precondition(thumbnails.insert(thumbnail).inserted)
@@ -200,7 +200,7 @@ import UIKit
         let galleryInbox = SharedImportInbox(directoryOverride: directory.appendingPathComponent("gallery"))
         let gallery = ImportCoordinator(session: gallerySession,
             inbox: galleryInbox,
-            fetch: { url in .init(url: url, title: "Gallery", imageURL: firstURL, imageURLs: [firstURL, secondURL, secondURL, badURL, thirdURL]) },
+            fetch: { url in .init(url: url, title: "Gallery", imageURLs: [firstURL, secondURL, secondURL, badURL, thirdURL]) },
             image: { address in
                 galleryDownloads.append(address)
                 if address == badURL { throw URLError(.badServerResponse) }
@@ -210,14 +210,14 @@ import UIKit
                 return galleryCutouts == 1 ? nil : artwork
             })
         try galleryInbox.enqueue(SharedImport(url: "https://shop.example/gallery")); gallery.checkInbox()
-        try await waitFor { gallery.items.first?.state == "Ready" }
+        try await waitFor { gallery.items.first?.phase.isReady == true }
         precondition(galleryDownloads == [firstURL, secondURL, badURL, thirdURL] && galleryCutouts == 1)
         let galleryPlacement = gallery.items[0].placementID!
         let galleryProductID = gallerySession.document.placements[galleryPlacement]!.productID
         let originals = gallerySession.document.products[galleryProductID]!.detailAssets
         precondition(originals.count == 3)
         gallery.retry(gallery.items[0].id)
-        try await waitFor { gallery.items.first?.state == "Ready" }
+        try await waitFor { gallery.items.first?.phase.isReady == true }
         let galleryProduct = gallerySession.document.products[galleryProductID]!
         precondition(galleryCutouts == 2 && galleryDownloads.count == 4)
         precondition(galleryProduct.detailAssets.count == 4 && Array(galleryProduct.detailAssets.dropFirst()) == originals)
@@ -229,8 +229,6 @@ import UIKit
         precondition(gallerySession.document.products[galleryProductID] == galleryProduct)
         gallerySession.redo()
         precondition(gallerySession.document.placements[galleryPlacement] == nil)
-        let legacy = try JSONDecoder().decode(GarmsAPI.ImportedProduct.self, from: Data(#"{"url":"https://shop.example","title":null,"imageURL":"https://cdn.example/first.png"}"#.utf8))
-        precondition(legacy.imageURLs == nil && legacy.imageURL == firstURL)
         // Photo batches share the normal queue, without metadata/image network calls.
         let photosSession = CanvasFixtures.session(sized: false).0
         let photos = ImportCoordinator(session: photosSession,
@@ -246,29 +244,29 @@ import UIKit
         precondition(photoLoads == 0, "Photo imports wait for initial layout")
         photosSession.updateViewport(CGSize(width: 390, height: 844))
         photos.start()
-        try await waitFor { photos.items.allSatisfy { $0.state == "Ready" } }
+        try await waitFor { photos.items.allSatisfy { $0.phase.isReady } }
         precondition(photoLoads == 2 && photos.items.count == 2)
-        precondition(Set(photosSession.document.namedGroups!.first(where: \.isRecentUploads)!.members)
+        precondition(Set(photosSession.document.namedGroups.first(where: \.isRecentUploads)!.members)
             == Set(photos.items.compactMap(\.placementID)))
         for item in photos.items {
             let productID = photosSession.document.placements[item.placementID!]!.productID
             let product = photosSession.document.products[productID]!
-            precondition(product.product_url.isEmpty && product.originalAsset != nil)
+            precondition(product.sourceUrl.isEmpty && product.original != nil)
             precondition(product.title == item.displayName && item.canRetryBackground)
         }
         photos.retry(photos.items[0].id)
-        try await waitFor { photos.items[0].state == "Ready" }
+        try await waitFor { photos.items[0].phase.isReady }
         precondition(photoLoads == 2, "Background retries reuse the retained original")
         var failedLoads = 0
         photos.importPhoto {
             failedLoads += 1
             return failedLoads == 1 ? Data("bad photo".utf8) : png
         }
-        try await waitFor { photos.items.last?.state == "Failed" }
+        try await waitFor { if case .failed = photos.items.last?.phase { true } else { false } }
         let failedID = photos.items.last!.id
         precondition(photos.items.last?.placementID == nil)
         photos.retry(failedID)
-        try await waitFor { photos.items.last?.state == "Ready" }
+        try await waitFor { photos.items.last?.phase.isReady == true }
         precondition(failedLoads == 2)
         let dismissedPlacement = photos.items.last!.placementID!
         photos.dismiss(failedID)
@@ -278,7 +276,7 @@ import UIKit
             try? await Task.sleep(for: .milliseconds(80))
             return png
         }
-        try await waitFor { photos.items.last?.state == "Processing" }
+        try await waitFor { if case .processing = photos.items.last?.phase { true } else { false } }
         let countBeforeDismiss = photosSession.document.order.count
         photos.dismiss(photos.items.last!.id)
         try await Task.sleep(for: .milliseconds(120))
@@ -289,16 +287,16 @@ import UIKit
         destination.camera.center = .init(x: -10000, y: -10000)
         destination.camera.zoom = 0.1
         let next = destination.insertImport(second, artwork: artwork)!
-        precondition(Set(destination.document.namedGroups!.first(where: \.isRecentUploads)!.members) == [first, next])
+        precondition(Set(destination.document.namedGroups.first(where: \.isRecentUploads)!.members) == [first, next])
         destination.undo()
-        precondition(destination.document.namedGroups!.first(where: \.isRecentUploads)!.members == [first])
+        precondition(destination.document.namedGroups.first(where: \.isRecentUploads)!.members == [first])
         destination.redo()
         destination.deletePlacement(first)
         destination.deletePlacement(next)
-        let empty = destination.document.namedGroups!.first(where: \.isRecentUploads)!
+        let empty = destination.document.namedGroups.first(where: \.isRecentUploads)!
         precondition(empty.members.isEmpty && !empty.bounds(in: destination.document).isNull)
         let replacement = destination.insertImport(record, artwork: artwork)!
-        precondition(destination.document.namedGroups!.first(where: \.isRecentUploads)!.members == [replacement])
+        precondition(destination.document.namedGroups.first(where: \.isRecentUploads)!.members == [replacement])
         print("Import session checks passed")
     }
 }

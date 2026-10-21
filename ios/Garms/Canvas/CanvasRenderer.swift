@@ -47,7 +47,7 @@ import UIKit
             groupPlate.position = (liftCenter-origin).cg
             let path = UIBezierPath(rect:groupPlate.bounds).cgPath
             groupPlate.path = path; groupPlate.shadowPath = path
-            let colour = session.document.namedGroups?.first { Set($0.members) == liftedIDs }?.backgroundColour
+            let colour = session.document.namedGroups.first { Set($0.members) == liftedIDs }?.backgroundColour
             groupPlate.fillColor = colour.map { uiColour($0).cgColor } ?? UIColor.white.cgColor
             groupPlate.strokeColor = nil
         }
@@ -83,7 +83,7 @@ import UIKit
             var tier = currentTiers[id] ?? desired
             if Double(tier) < pixels*0.8 || (desired < tier && Date().timeIntervalSince(zoomChanged) > 0.5) || desired == 128 { tier = desired }
             currentTiers[id] = tier
-            let key = CanvasAssetStore.Key(asset:product.asset,tier:tier)
+            let key = CanvasAssetStore.Key(asset:product.cutout,tier:tier)
             assets.needed.insert(key)
             layer.contents = assets.image(key)
             let position = (p.center-origin).cg
@@ -112,7 +112,7 @@ import UIKit
     }
 
     private func updateGroupBackgrounds(session: CanvasSession, liftedIDs: Set<String>) {
-        let groups = (session.document.namedGroups ?? []).filter { $0.backgroundColour != nil }
+        let groups = session.document.namedGroups.filter { $0.backgroundColour != nil }
         let ids = Set(groups.map(\.id))
         for id in Array(groupBackgrounds.keys) where !ids.contains(id) {
             groupBackgrounds.removeValue(forKey: id)?.removeFromSuperlayer()

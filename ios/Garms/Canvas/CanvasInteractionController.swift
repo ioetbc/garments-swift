@@ -9,16 +9,13 @@ import CoreGraphics
             if state != .idle { session.inspectedPlacement = nil }
         }
     }
-    private var historyBaseline: CanvasSnapshot?
-    private var original: CanvasDocument?
+    private var original: CanvasSnapshot?
     private var baseline: [StickerPlacement] = []
     private var start = WorldPoint()
     private var cameraStart = CanvasCamera()
     private var pinchAnchor = WorldPoint()
     private var scaleStart = 1.0
     private var magneticTarget: String?
-    private var originalGroups: [[String]] = []
-    private var originalDetached: Set<CanvasGroupLink> = []
     private var dragSample: (point: CGPoint, time: TimeInterval)?
     private var releasedMembers: Set<String> = []
     private var springRest: StickerPlacement?
@@ -28,12 +25,7 @@ import CoreGraphics
 
     init(session:CanvasSession) { self.session = session }
     private func beginObject(state:State, point:CGPoint) {
-        if original == nil {
-            historyBaseline = session.snapshot()
-            original = session.document
-            originalGroups = session.committedGroups
-            originalDetached = session.detachedLinks
-        }
+        if original == nil { original = session.snapshot() }
         self.state = state; baseline = session.selected
         magneticTarget = nil
         session.elasticLink = nil
@@ -48,7 +40,7 @@ import CoreGraphics
         beginObject(state:.imageDrag,point:point)
         // A fresh drag can intentionally rejoin a former neighbour. Snapshot the
         // exclusions first so cancellation still restores the detached state.
-        session.detachedLinks = session.detachedLinks.filter { $0.first != id && $0.second != id }
+        session.stage { $0.detachedLinks = $0.detachedLinks.filter { $0.first != id && $0.second != id } }
         dragSample = timestamp.map { (point,$0) }
         session.render?()
     }
@@ -58,9 +50,7 @@ import CoreGraphics
         guard items.count > 1 else { return }
         guard session.isOnline else { session.error = CanvasSession.offlineMessage; return }
         session.select(nil)
-        originalGroups = session.committedGroups; originalDetached = session.detachedLinks
-        historyBaseline = session.snapshot()
-        original = session.document; baseline = items; state = .groupDrag
+        original = session.snapshot(); baseline = items; state = .groupDrag
         start = session.camera.world(point,viewport:session.viewport)
         session.render?()
     }
@@ -120,7 +110,7 @@ import CoreGraphics
         springRest = nil
         session.elasticLink = nil
         guard releasedMembers.isEmpty,
-              let group = originalGroups.first(where: { $0.contains(item.id) }),
+              let group = original?.document.committedGroups.first(where: { $0.contains(item.id) }),
               let pickup = baseline.first else { return nil }
         let neighbours = group.filter { $0 != item.id }.compactMap { session.document.placements[$0] }
         guard let target = neighbours.min(by: {
@@ -161,7 +151,7 @@ import CoreGraphics
         let fingerSpeed = hypot(point.x-last.point.x,point.y-last.point.y)/(timestamp-last.time)
         guard min(outwardSpeed,fingerSpeed) >= CanvasConfiguration.detachSpeed else { return }
         releasedMembers.formUnion(neighbours.map(\.id))
-        for neighbour in neighbours { session.detachedLinks.insert(CanvasGroupLink(item.id,neighbour.id)) }
+        session.stage { snapshot in for neighbour in neighbours { snapshot.detachedLinks.insert(CanvasGroupLink(item.id,neighbour.id)) } }
         magneticTarget = nil
         session.groupingPreview = nil
     }
@@ -174,7 +164,7 @@ import CoreGraphics
         let candidates = session.index.query(visible.insetBy(dx:-radius,dy:-radius)).subtracting(retained)
             .sorted().compactMap { session.document.placements[$0] }
             .filter { target in
-                let existing = originalGroups.contains { $0.contains(item.id) && $0.contains(target.id) }
+                let existing = original?.document.committedGroups.contains { $0.contains(item.id) && $0.contains(target.id) } == true
                 return canAttract(item.id,target.id) && CanvasGeometry.distance(visible,target.bounds) <= radius
                     && (!existing || CanvasGeometry.distance(item.bounds,target.bounds) <= CanvasConfiguration.detachRadius)
             }
@@ -216,45 +206,39 @@ import CoreGraphics
     }
     private func apply(_ items:[StickerPlacement]) {
         guard items.allSatisfy(\.valid) else { return }
-        for p in items { session.document.placements[p.id] = p; session.index.update(p) }
+        session.stage { snapshot in for p in items { snapshot.document.placements[p.id] = p } }
+        for p in items { session.index.update(p) }
         session.refresh(rebuild:false)
     }
     func finish() {
+        guard let original else { clear(); session.render?(); return }
         let returning = state == .imageDrag ? springRest : nil
-        if let returning {
-            session.document.placements[returning.id] = returning
-            session.groupingPreview = nil
-        }
-        if state == .imageDrag, let preview = session.groupingPreview,
-           var item = session.document.placements[preview.moving],
-           let target = session.document.placements[preview.target] {
+        // A spring-back release cancels the grouping preview.
+        let preview = state == .imageDrag && returning == nil ? session.groupingPreview : nil
+        let groups = session.groups
+        clear()
+        session.edit(from: original) { snapshot in
+            if let returning { snapshot.document.placements[returning.id] = returning }
+            guard let preview, var item = snapshot.document.placements[preview.moving],
+                  let target = snapshot.document.placements[preview.target] else { return }
             // Commit the preview as a real proximity group when the lifted image shrinks.
             let a = item.bounds, b = target.bounds
             let gap = WorldPoint(x:b.minX > a.maxX ? b.minX-a.maxX : (b.maxX < a.minX ? b.maxX-a.minX : 0),
                                  y:b.minY > a.maxY ? b.minY-a.maxY : (b.maxY < a.minY ? b.maxY-a.minY : 0))
             let distance = hypot(gap.x,gap.y)
-            let existing = originalGroups.contains { $0.contains(item.id) && $0.contains(target.id) }
+            let existing = original.document.committedGroups.contains { $0.contains(item.id) && $0.contains(target.id) }
             if !existing && distance > CanvasConfiguration.joinRadius {
                 item.center = item.center + gap*((distance-CanvasConfiguration.joinRadius+1)/distance)
-                session.document.placements[item.id] = item
+                snapshot.document.placements[item.id] = item
             }
             // Only the target under the item at release becomes lasting membership.
-            session.committedGroups = session.groups
+            snapshot.document.reconcileGroupNames(groups)
         }
-        let before = original
-        let historyBefore = historyBaseline
-        clear()
-        if let before { session.complete(before, baseline: historyBefore) }
-        else { session.render?() }
     }
     func cancel() {
-        if let original {
-            session.document = original
-            session.committedGroups = originalGroups
-            session.detachedLinks = originalDetached
-        }
+        if let original { session.stage { $0 = original } }
         else if state == .cameraPan || state == .cameraPinch { session.camera = cameraStart }
         clear(); session.refresh()
     }
-    private func clear() { historyBaseline = nil; session.elasticLink = nil; springRest = nil; dragSample = nil; releasedMembers = []; originalGroups = []; originalDetached = []; original = nil; baseline = []; magneticTarget = nil; session.groupingPreview = nil; state = .idle }
+    private func clear() { session.elasticLink = nil; springRest = nil; dragSample = nil; releasedMembers = []; original = nil; baseline = []; magneticTarget = nil; session.groupingPreview = nil; state = .idle }
 }

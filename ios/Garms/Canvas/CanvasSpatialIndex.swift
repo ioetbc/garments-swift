@@ -35,7 +35,7 @@ nonisolated final class CanvasSpatialIndex {
     }
     func rebuild(_ d: CanvasDocument) { cells.removeAll(); bounds.removeAll(); oversized.removeAll(); for p in d.placements.values { insert(p) } }
 }
-nonisolated struct CanvasGroupLink: Hashable {
+nonisolated struct CanvasGroupLink: Codable, Hashable, Sendable {
     let first: String
     let second: String
     init(_ a: String, _ b: String) { first = min(a,b); second = max(a,b) }
@@ -68,7 +68,7 @@ nonisolated enum CanvasProximity {
                     visited.insert(other); members.append(other)
                 }
             }
-            let recentMembers = document.namedGroups?.first(where: \.isRecentUploads)?.members ?? []
+            let recentMembers = document.namedGroups.first(where: \.isRecentUploads)?.members ?? []
             if members.count > 1 || members.contains(where: recentMembers.contains) { result.append(members) }
         }
         return result

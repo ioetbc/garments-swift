@@ -64,7 +64,7 @@ import Vision
         var fetches = 0, downloads = 0
         let coordinator = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
             fetches += 1
-            return .init(url: url, title: "Two shoes", imageURL: "https://cdn.example/shoes.png")
+            return .init(url: url, title: "Two shoes", imageURLs: ["https://cdn.example/shoes.png"])
         }, image: { _ in downloads += 1; return source }, cutout: { try await gate.run($0) })
         let record = SharedImport(url: "https://shop.example/shoes")
         try inbox.enqueue(record)
@@ -72,52 +72,54 @@ import Vision
         try await waitFor { gate.calls == 1 }
         let id = coordinator.items[0].placementID!
         let productID = session.document.placements[id]!.productID
-        let original = session.document.products[productID]!.asset
-        precondition(session.document.products[productID]!.originalAsset == original)
+        let original = session.document.products[productID]!.cutout
+        precondition(session.document.products[productID]!.original == original)
         precondition(session.importedAssets.data(for: original) == png)
-        precondition(coordinator.items[0].stage == .removingBackground)
+        precondition(coordinator.items[0].phase == .processing(.removingBackground))
         precondition(fetches == 1 && downloads == 1 && gate.peak == 1)
         // Resolve an active interaction before rereading geometry.
         session.resolveInteraction = {
-            session.document.placements[id]?.center = .init(x: 800, y: 600)
-            session.document.placements[id]?.width = 280
-            session.document.placements[id]?.height = 280
+            session.stage {
+                $0.document.placements[id]?.center = .init(x: 800, y: 600)
+                $0.document.placements[id]?.width = 280
+                $0.document.placements[id]?.height = 280
+            }
         }
         let order = session.document.order
         let camera = session.camera
         let selection = session.selection
         let revision = session.revision
         gate.finish(cutout)
-        try await waitFor { coordinator.items[0].state == "Ready" }
+        try await waitFor { coordinator.items[0].phase.isReady }
         session.resolveInteraction = nil
         let product = session.document.products[productID]!
         let placement = session.document.placements[id]!
-        precondition(product.originalAsset == original && product.asset != original)
-        precondition(session.importedAssets.data(for: product.asset) == png && session.importedAssets.data(for: original) == png)
+        precondition(product.original == original && product.cutout != original)
+        precondition(session.importedAssets.data(for: product.cutout) == png && session.importedAssets.data(for: original) == png)
         precondition(placement.center == .init(x: 800, y: 600) && max(placement.width, placement.height) == 280)
         precondition(session.document.order == order && session.document.order.count == baseline + 1)
         precondition(session.camera.center == camera.center && session.camera.zoom == camera.zoom && session.selection == selection)
-        precondition(session.revision > revision && product.product_url == record.url)
+        precondition(session.revision > revision && product.sourceUrl == record.url)
         try session.document.validate()
         let store = CanvasAssetStore(); store.library = session.importedAssets
-        let key = CanvasAssetStore.Key(asset: product.asset, tier: 192)
+        let key = CanvasAssetStore.Key(asset: product.cutout, tier: 192)
         store.needed = [key]; _ = store.image(key); store.reconcile()
-        try await waitFor { store.masks[product.asset] != nil }
+        try await waitFor { store.masks[product.cutout] != nil }
         precondition(!store.hit(placement, product: product, point: placement.center))
         precondition(store.hit(placement, product: product, point: .init(x: placement.bounds.minX + placement.width * 0.1, y: placement.center.y)))
         precondition(store.hit(placement, product: product, point: .init(x: placement.bounds.minX + placement.width * 0.9, y: placement.center.y)))
         store.memoryWarning()
-        precondition(session.importedAssets.data(for: original) != nil && session.importedAssets.data(for: product.asset) != nil)
+        precondition(session.importedAssets.data(for: original) != nil && session.importedAssets.data(for: product.cutout) != nil)
         store.needed = [key]; _ = store.image(key); store.reconcile()
-        try await waitFor { store.masks[product.asset] != nil }
+        try await waitFor { store.masks[product.cutout] != nil }
         // Another product can independently own the same original.
         let other = session.insertImport(SharedImport(url: "https://shop.example/other"), artwork: source)!
         let otherProduct = session.document.placements[other]!.productID
-        session.document.products[otherProduct]?.originalAsset = original
+        session.stage { $0.document.products[otherProduct]?.original = original }
         session.deletePlacement(id); coordinator.deleted(id)
         // Removing Stickers keeps the Products, so their files stay cached.
         session.deletePlacement(other)
-        precondition(session.importedAssets.data(for: product.asset) != nil && session.importedAssets.data(for: original) != nil)
+        precondition(session.importedAssets.data(for: product.cutout) != nil && session.importedAssets.data(for: original) != nil)
         // Both deletion entry points discard late results without resurrecting the Sticker.
         for dismiss in [false, true] {
             let record = SharedImport(url: "https://shop.example/delete-\(dismiss)")
@@ -131,14 +133,14 @@ import Vision
             gate.finish(cutout)
             await Task.yield()
             precondition(session.document.placements[placementID] == nil)
-            precondition(session.document.products[oldProduct.id]?.asset == oldProduct.asset)
+            precondition(session.document.products[oldProduct.id]?.cutout == oldProduct.cutout)
         }
         // Empty and thrown extraction outcomes are successful original imports.
         for throwsError in [false, true] {
             var calls = 0, imageCalls = 0, cutoutCalls = 0
             let fallback = ImportCoordinator(session: session, inbox: inbox, fetch: { url in
                 calls += 1
-                return .init(url: url, title: nil, imageURL: "https://cdn.example/image.png")
+                return .init(url: url, title: nil, imageURLs: ["https://cdn.example/image.png"])
             }, image: { _ in imageCalls += 1; return source }, cutout: { _ in
                 cutoutCalls += 1
                 if cutoutCalls > 1 { return cutout }
@@ -147,23 +149,23 @@ import Vision
             })
             try inbox.enqueue(SharedImport(url: "https://shop.example/fallback-\(throwsError)"))
             fallback.checkInbox()
-            try await waitFor { fallback.items.first?.state == "Ready" }
+            try await waitFor { fallback.items.first?.phase.isReady == true }
             let item = fallback.items[0]
-            precondition(item.failure == nil && item.note?.hasPrefix("Background kept:") == true && calls == 1)
-            if throwsError { precondition(item.note!.contains("NSURLErrorDomain")) }
-            else { precondition(item.note!.contains("no usable cutout")) }
+            guard case .ready(let note?) = item.phase else { preconditionFailure("A kept background is noted") }
+            precondition(note.hasPrefix("Background kept:") && calls == 1)
+            precondition(note.contains(throwsError ? "NSURLErrorDomain" : "no usable cutout"))
             let product = session.document.products[session.document.placements[item.placementID!]!.productID]!
-            precondition(product.asset == product.originalAsset)
+            precondition(product.cutout == product.original)
             fallback.retry(item.id)
-            try await waitFor { fallback.items[0].state == "Ready" && cutoutCalls == 2 }
-            precondition(calls == 1 && imageCalls == 1 && fallback.items[0].note == nil)
+            try await waitFor { fallback.items[0].phase.isReady && cutoutCalls == 2 }
+            precondition(calls == 1 && imageCalls == 1 && fallback.items[0].phase == .ready(note: nil))
             precondition(!fallback.items[0].canRetryBackground)
             let retriedProduct = session.document.products[session.document.placements[item.placementID!]!.productID]!
-            precondition(retriedProduct.asset != retriedProduct.originalAsset)
+            precondition(retriedProduct.cutout != retriedProduct.original)
         }
         let fixture = CanvasFixtures.products[0]
         let decodedFixture = try JSONDecoder().decode(Product.self, from: JSONEncoder().encode(fixture))
-        precondition(decodedFixture == fixture && decodedFixture.originalAsset == nil)
+        precondition(decodedFixture == fixture && decodedFixture.original == nil)
         try session.document.validate()
         print("Foreground cutout checks passed")
     }

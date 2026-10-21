@@ -95,6 +95,6 @@ nonisolated enum CanvasImageWorker {
     }
     func hit(_ p: StickerPlacement, product: Product, point: WorldPoint) -> Bool {
         guard p.bounds.contains(point.cg) else { return false }
-        return masks[product.asset]?.hit(u:(point.x-p.bounds.minX)/p.width,v:(point.y-p.bounds.minY)/p.height) ?? true
+        return masks[product.cutout]?.hit(u:(point.x-p.bounds.minX)/p.width,v:(point.y-p.bounds.minY)/p.height) ?? true
     }
 }

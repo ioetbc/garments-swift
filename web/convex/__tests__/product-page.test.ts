@@ -12,7 +12,7 @@ describe("reading a product page", () => {
   it.effect("preserves submitted variants and fragments, prefers Open Graph", () => Effect.gen(function* () {
     const url = "https://shop.example/product?size=L#blue";
     const product = yield* reader(async () => ({ metadata: { ogTitle: " Product ", title: "Page", ogImage: "https://cdn.example/photo.png" } })).read(` ${url} `);
-    expect(product).toEqual({ url, title: "Product", imageURL: "https://cdn.example/photo.png", imageURLs: ["https://cdn.example/photo.png"], price: null });
+    expect(product).toEqual({ url, title: "Product", imageURLs: ["https://cdn.example/photo.png"], price: null });
   }));
 
   it.effect("rejects a private URL without scraping", () => Effect.gen(function* () {
@@ -33,32 +33,32 @@ describe("reading a product page", () => {
 describe("extracting a product", () => {
   it("partial metadata never chooses unrelated page images", () => {
     expect(extract("https://shop.example", { metadata: { title: "Page", ogImage: "/relative.jpg" }, images: ["https://cdn.example/logo.png"] }))
-      .toEqual({ url: "https://shop.example", title: "Page", imageURL: null, imageURLs: [], price: null });
+      .toEqual({ url: "https://shop.example", title: "Page", imageURLs: [], price: null });
     expect(extract("https://shop.example", {}).title).toBeNull();
   });
 
   it("falls back to alternate social metadata when ogImage is missing or invalid", () => {
     for (const key of ["og:image", "og:image:secure_url", "og:image:url", "twitter:image", "twitter:image:src"]) {
-      expect(extract("https://shop.example", { metadata: { ogImage: "http://cdn.example/insecure.jpg", [key]: ["/relative.jpg", "https://cdn.example/product.jpg"] } }).imageURL)
+      expect(extract("https://shop.example", { metadata: { ogImage: "http://cdn.example/insecure.jpg", [key]: ["/relative.jpg", "https://cdn.example/product.jpg"] } }).imageURLs[0])
         .toBe("https://cdn.example/product.jpg");
     }
   });
 
   it("extracts HTML social images, decodes entities and preserves signed query strings", () => {
     const rawHtml = '<meta property="og:image" content="https://cdn.example/product.jpg?w=800&amp;signature=abc"><meta name="twitter:image" content="https://cdn.example/twitter.jpg">';
-    expect(extract("https://shop.example", { rawHtml }).imageURL).toBe("https://cdn.example/product.jpg?w=800&signature=abc");
-    expect(extract("https://shop.example", { rawHtml, metadata: { ogImage: "https://cdn.example/preferred.jpg" } }).imageURL).toBe("https://cdn.example/preferred.jpg");
-    expect(extract("https://shop.example", { rawHtml: '<meta name="twitter:image" content="https://cdn.example/twitter.jpg">' }).imageURL).toBe("https://cdn.example/twitter.jpg");
+    expect(extract("https://shop.example", { rawHtml }).imageURLs[0]).toBe("https://cdn.example/product.jpg?w=800&signature=abc");
+    expect(extract("https://shop.example", { rawHtml, metadata: { ogImage: "https://cdn.example/preferred.jpg" } }).imageURLs[0]).toBe("https://cdn.example/preferred.jpg");
+    expect(extract("https://shop.example", { rawHtml: '<meta name="twitter:image" content="https://cdn.example/twitter.jpg">' }).imageURLs[0]).toBe("https://cdn.example/twitter.jpg");
   });
 
   it("Vinted gallery fallback selects the main listing photo and reports its source", () => {
     const rawHtml = '<img src="https://cdn.example/logo.png"><img data-testid="item-photo-1--img" src="https://images1.vinted.net/product.webp?s=signed"><img src="https://cdn.example/recommendation.jpg">';
     const { product, imageSource } = extractProduct("https://www.vinted.co.uk/items/10140550570-jacket?homepage_session_id=test", { metadata: { title: "Jacket" }, rawHtml });
-    expect([product.imageURL, imageSource]).toEqual(["https://images1.vinted.net/product.webp?s=signed", "Vinted listing gallery"]);
+    expect([product.imageURLs[0], imageSource]).toEqual(["https://images1.vinted.net/product.webp?s=signed", "Vinted listing gallery"]);
     for (const url of ["https://shop.example/items/123", "https://www.vinted.co.uk/member/123", "https://www.vinted.co.uk.evil.example/items/123"]) {
-      expect(extract(url, { rawHtml }).imageURL).toBeNull();
+      expect(extract(url, { rawHtml }).imageURLs).toEqual([]);
     }
-    expect(extract("https://www.vinted.co.uk/items/123", { rawHtml: '<img src="https://cdn.example/avatar.jpg">' }).imageURL).toBeNull();
+    expect(extract("https://www.vinted.co.uk/items/123", { rawHtml: '<img src="https://cdn.example/avatar.jpg">' }).imageURLs).toEqual([]);
   });
 
   it("all fallback image sources reject unsafe URLs", () => {
@@ -66,7 +66,7 @@ describe("extracting a product", () => {
       expect(extract("https://www.vinted.co.uk/items/123", {
         metadata: { "twitter:image": image },
         rawHtml: `<meta property="og:image" content="${image}"><img data-testid="item-photo-1--img" src="${image}">`,
-      }).imageURL).toBeNull();
+      }).imageURLs).toEqual([]);
     }
   });
 
@@ -89,7 +89,6 @@ describe("extracting a product", () => {
     const rawHtml = script(stream.slice(0, 100)) + script(stream.slice(100)) + '<img data-testid="item-photo-1--img" src="' + primary + '">';
     const product = extract("https://www.vinted.co.uk/items/123-jacket?size=M", { metadata: { ogImage: primary }, rawHtml });
     expect(product.imageURLs).toEqual([primary, second, third]);
-    expect(product.imageURL).toBe(primary);
   });
 
   it("reads only matching structured Product images and tolerates malformed scripts", () => {
@@ -100,7 +99,6 @@ describe("extracting a product", () => {
     const rawHtml = '<script type="application/ld+json">invalid</script><script type="application/ld+json">' + JSON.stringify(products) + "</script>";
     const product = extract("https://shop.example/jacket", { metadata: { title: "Jacket | Shop" }, rawHtml });
     expect(product.imageURLs).toEqual(["https://cdn.example/first.jpg", "https://cdn.example/second.jpg"]);
-    expect(product.imageURL).toBe(product.imageURLs[0]);
   });
 
   it("SSENSE uses all rendered SKU photos instead of the broken JSON-LD template", () => {
@@ -113,7 +111,7 @@ describe("extracting a product", () => {
       .map((src) => `<img loading="lazy" src="${src}">`).join("");
     const { product, imageSource } = extractProduct(url, { metadata: { ogImage: photo(1, "w_640") }, rawHtml });
     expect(product.imageURLs).toEqual([1, 2, 3, 4].map((index) => photo(index)));
-    expect([product.imageURL, imageSource]).toEqual([photo(1), "product gallery"]);
+    expect([product.imageURLs[0], imageSource]).toEqual([photo(1), "product gallery"]);
     const fallback = extract(url, { metadata: { ogImage: photo(1, "w_640") }, rawHtml: rawHtml.replace(/<img[^>]*>/g, "") });
     expect(fallback.imageURLs).toEqual([photo(1, "w_640")]);
   });

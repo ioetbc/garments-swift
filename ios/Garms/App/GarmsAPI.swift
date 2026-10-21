@@ -13,8 +13,7 @@ enum GarmsAPI {
     nonisolated struct ImportedProduct: Decodable, Sendable {
         let url: String
         let title: String?
-        let imageURL: String?
-        var imageURLs: [String]? = nil
+        var imageURLs: [String] = []
         var price: Price? = nil
     }
     /// A web page that is probably the listing a Screenshot shows.
