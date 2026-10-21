@@ -86,13 +86,4 @@ describe("searching for a Screenshot's listing", () => {
     stub({ title: "Coat" }, [], { gateway: 200, firecrawl: 500 });
     await expect(convexTest(schema, modules).withIdentity(alice).action(api.matches.search, { image })).rejects.toThrow(/Couldn't search/);
   });
-
-  test("each User has a daily limit, and other Users are unaffected", async () => {
-    const fetch = stub({ title: null });
-    const t = convexTest(schema, modules);
-    for (let i = 0; i < 30; i++) await t.withIdentity(alice).action(api.matches.search, { image });
-    await expect(t.withIdentity(alice).action(api.matches.search, { image })).rejects.toThrow(/limit/);
-    expect(fetch).toHaveBeenCalledTimes(30);
-    await t.withIdentity({ tokenIdentifier: "test|bob" }).action(api.matches.search, { image });
-  });
 });

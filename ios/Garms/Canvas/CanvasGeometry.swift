@@ -73,16 +73,4 @@ nonisolated enum CanvasGeometry {
         hypot(max(b.minX-a.maxX, a.minX-b.maxX, 0), max(b.minY-a.maxY, a.minY-b.maxY, 0))
     } 
     static func union(_ items: [StickerPlacement]) -> CGRect { items.reduce(CGRect.null) { $0.union($1.bounds) } }
-    static func clampedScale(_ scale: Double, items: [StickerPlacement]) -> Double {
-        let low = items.map { CanvasConfiguration.edge.lowerBound / max($0.width,$0.height) }.max() ?? 1
-        let high = items.map { CanvasConfiguration.edge.upperBound / max($0.width,$0.height) }.min() ?? 1
-        return min(high,max(low,scale))
-    }
-    static func scaled(_ items: [StickerPlacement], anchor: WorldPoint, destination: WorldPoint, scale: Double) -> [StickerPlacement] {
-        let s = clampedScale(scale, items: items)
-        return items.map { item in
-            var p = item; p.center = destination + (item.center-anchor)*s
-            p.width *= s; p.height *= s; return p
-        }
-    }
 }

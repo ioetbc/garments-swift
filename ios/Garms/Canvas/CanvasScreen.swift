@@ -9,8 +9,6 @@ struct CanvasScreen: View {
     @State private var statuses: [String: String] = [:]
     @State private var showingImports = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
-    @State private var sendingLogs: Set<UUID> = []
-    @State private var logDelivery: [UUID: String] = [:]
     @State private var searchExpanded = false
     @State private var groupPlacement: StickerPlacement?
     @Environment(\.scenePhase) private var phase
@@ -22,18 +20,6 @@ struct CanvasScreen: View {
                     get: { session.searchQuery },
                     set: { session.searchQuery = $0 }
                 ), isPresented: $searchExpanded, prompt: "Search canvases")
-                .searchSuggestions {
-                    // Products with no Sticker are only reachable here; choosing one places it again.
-                    ForEach(unplacedMatches) { product in
-                        Button {
-                            searchExpanded = false
-                            session.placeSticker(of: product.id)
-                        } label: {
-                            Label(product.title, systemImage: "plus.circle")
-                        }
-                        .accessibilityHint("Places this product on the canvas")
-                    }
-                }
                 .searchToolbarBehavior(.minimize)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -118,57 +104,18 @@ struct CanvasScreen: View {
                 .presentationDetents([.height(410), .large])
                 .presentationDragIndicator(.visible)
             }
-            .sheet(isPresented: $showingImports, onDismiss: { session.revealedMatch = nil }) {
+            .sheet(isPresented: $showingImports) {
                 NavigationStack {
-                    ScrollViewReader { proxy in
                     List {
                         Section {
                             photoPicker
                         }
-                        if let notice = session.imports.notice { Text(notice).font(.callout) }
-                        let awaiting = session.imports.awaitingMatch
-                        let visible = session.imports.visibleItems
-                        if visible.isEmpty && awaiting.isEmpty { Text("Choose photos or share a link to import items.") }
-                        if !awaiting.isEmpty {
-                            Section("Find the listing") {
-                                ForEach(awaiting) { product in
-                                    AwaitingMatchRow(product: product, library: session.importedAssets, imports: session.imports)
-                                        .id(product.id)
-                                }
-                            }
-                        }
-                        ForEach(visible) { item in
+                        if session.imports.items.isEmpty { Text("Choose photos or share a link to import items.") }
+                        ForEach(session.imports.items) { item in
                             VStack(alignment: .leading, spacing: 8) {
                                 Text(item.displayName).lineLimit(2)
                                 Text(item.failure ?? (item.stage == .loadingPhoto && item.state == "Processing" ? "Loading photo…" : item.stage == .removingBackground && item.state == "Processing" ? "Removing background…" : item.note ?? item.state)).font(.caption)
-                                DisclosureGroup("Processing log") {
-                                    Text(item.logs.joined(separator: "\n"))
-                                        .font(.system(.caption, design: .monospaced))
-                                        .textSelection(.enabled)
-                                }
-                                Button(sendingLogs.contains(item.id) ? "Sending…" : "Send log to Mac", systemImage: "desktopcomputer") {
-                                    let id = item.id, report = item.diagnosticReport
-                                    sendingLogs.insert(id)
-                                    logDelivery[id] = nil
-                                    Task {
-                                        defer { sendingLogs.remove(id) }
-                                        do {
-                                            try await session.server.sendImportLog(report)
-                                            logDelivery[id] = "Sent — check the Convex dashboard logs."
-                                        } catch {
-                                            logDelivery[id] = ImportDiagnostics.describe(error)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.bordered)
-                                .disabled(sendingLogs.contains(item.id))
-                                if let delivery = logDelivery[item.id] {
-                                    Text(delivery).font(.caption).textSelection(.enabled)
-                                }
                                 HStack {
-                                    Button("Copy log", systemImage: "doc.on.doc") {
-                                        UIPasteboard.general.string = item.diagnosticReport
-                                    }.buttonStyle(.bordered)
                                     if item.state == "Failed" { Button("Retry") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
                                     if item.canRetryBackground { Button("Retry background removal") { session.imports.retry(item.id) }.buttonStyle(.bordered) }
                                     Button("Dismiss", role: .destructive) { session.imports.dismiss(item.id) }.buttonStyle(.bordered)
@@ -178,15 +125,8 @@ struct CanvasScreen: View {
                     }
                     .navigationTitle("Imports")
                     .toolbar { Button("Done") { showingImports = false } }
-                    .task(id: session.revealedMatch) {
-                        if let id = session.revealedMatch { withAnimation { proxy.scrollTo(id, anchor: .top) } }
-                    }
-                    }
                 }
                 .presentationDetents([.medium, .large])
-            }
-            .onChange(of: session.revealedMatch) { _, id in
-                if id != nil { showingImports = true }
             }
             .alert("Canvas needs attention",isPresented:Binding(get:{ session.error != nil },set:{ if !$0 { session.error = nil } })) {
                 Button("OK") { session.error = nil }
@@ -197,10 +137,7 @@ struct CanvasScreen: View {
                 selectedPhotos = []
                 Task {
                     for (index, photo) in photos.enumerated() {
-                        // Screenshot check disabled for now: shared screenshots (e.g. saved from WhatsApp) aren't marked, so every photo is searched.
-                        // let check = await Self.screenshotCheck(photo)
-                        // session.imports.importPhoto(title: "Imported photo \(index + 1)", screenshot: check.isScreenshot, screenshotCheck: check.detail) {
-                        session.imports.importPhoto(title: "Imported photo \(index + 1)", screenshot: true) {
+                        session.imports.importPhoto(title: "Imported photo \(index + 1)") {
                             guard let data = try await photo.loadTransferable(type: Data.self) else {
                                 throw ImportedImageDownload.ImageError.detail("This photo could not be loaded. Retry or select another image.")
                             }
@@ -211,32 +148,11 @@ struct CanvasScreen: View {
             }
             .onChange(of:phase) { _,v in
                 if v != .active { session.resolveInteraction?() }
-                session.imports.setActive(v == .active)
+                // Links shared while Garms was in the background wait in the inbox.
+                if v == .active { session.imports.checkInbox() }
             }
-            .task { session.imports.setActive(phase == .active) }
+            .task { session.imports.checkInbox() }
     }
-
-    private var unplacedMatches: [Product] {
-        let query = session.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return [] }
-        let placed = Set(session.document.placements.values.map(\.productID))
-        return session.document.products.values
-            .filter { !placed.contains($0.id) && $0.matchesSearch(query) }
-            .sorted { $0.title < $1.title }
-    }
-
-//     /// Whether Photos marks the picked image as a Screenshot, and why not. Needs library access; without it nothing is searched.
-//     private static func screenshotCheck(_ item: PhotosPickerItem) async -> (isScreenshot: Bool, detail: String) {
-//         guard let id = item.itemIdentifier else { return (false, "Screenshot check: the picker gave no Photos identifier.") }
-//         var status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
-//         if status == .notDetermined { status = await PHPhotoLibrary.requestAuthorization(for: .readWrite) }
-//         guard status == .authorized || status == .limited else { return (false, "Screenshot check: Photos access is \(status.rawValue) (not authorized).") }
-//         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else {
-//             return (false, "Screenshot check: Photos access is \(status == .limited ? "limited and excludes this photo" : "full but the photo was not found").")
-//         }
-//         let isScreenshot = asset.mediaSubtypes.contains(.photoScreenshot)
-//         return (isScreenshot, "Screenshot check: Photos \(isScreenshot ? "marks" : "does not mark") this photo as a Screenshot (subtypes \(asset.mediaSubtypes.rawValue)).")
-//     }
 
     private var photoPicker: some View {
         PhotosPicker(selection: $selectedPhotos, selectionBehavior: .ordered, matching: .images, photoLibrary: .shared()) {
@@ -249,7 +165,7 @@ struct CanvasScreen: View {
     private func productDetails(for placement: StickerPlacement, onDelete: @escaping () -> Void) -> some View {
         let _ = session.revision
         if let product = session.document.products[placement.productID] {
-            CanvasImageDetails(product: product, library: session.importedAssets, server: session.server, status: Binding(
+            CanvasImageDetails(product: product, library: session.importedAssets, status: Binding(
                 get: { statuses[placement.id] ?? "Wishlist" },
                 set: { statuses[placement.id] = $0 }
             ), title: Binding(
@@ -264,24 +180,12 @@ struct CanvasScreen: View {
             ), notes: Binding(
                 get: { session.document.products[product.id]?.notes ?? "" },
                 set: { session.updateProductNotes(product.id, notes: $0) }
-            ), onRemoveSticker: {
-                onDelete()
-                session.deletePlacement(placement.id)
-                statuses[placement.id] = nil
-                if let group = session.inspectedGroup {
-                    session.inspectedGroup = session.document.namedGroups?.first { $0.id == group.id }
-                }
-            }, onDeleteProduct: {
+            ), onDeleteProduct: {
                 onDelete()
                 session.deleteProduct(product.id)
                 if let group = session.inspectedGroup {
                     session.inspectedGroup = session.document.namedGroups?.first { $0.id == group.id }
                 }
-            }, onBringToFront: {
-                session.bringToFront(placement.id)
-            }, onPlaceAnother: {
-                onDelete()
-                session.placeSticker(of: product.id)
             })
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)

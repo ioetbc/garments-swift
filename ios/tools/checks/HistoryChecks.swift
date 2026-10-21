@@ -4,19 +4,18 @@ import UIKit
     @MainActor static func main() {
         let session = CanvasFixtures.session().0
         let id = session.document.order[0]
-        session.select(id)
         let original = session.document
-        session.nudge(x: 30, y: 10)
+        session.move(id, x: 30, y: 10)
         let moved = session.document
         precondition(session.history.canUndo)
-        session.resize(1.1)
+        session.move(id, x: 0, y: 40)
         session.undo()
         precondition(session.document == moved)
         session.undo()
         precondition(session.document == original && !session.history.canUndo)
         session.redo()
         precondition(session.document == moved)
-        session.nudge(x: 10, y: 0)
+        session.move(id, x: 10, y: 0)
         precondition(!session.history.canRedo)
         let beforeDelete = session.document
         session.deletePlacement(id)
@@ -63,8 +62,7 @@ import UIKit
         precondition(imported.document.products[productID] == enriched)
         precondition(imported.document.placements[importedID]!.height == 2 * imported.document.placements[importedID]!.width)
         imported.undo()
-        imported.select(imported.document.order[0])
-        imported.nudge(x: 5, y: 0)
+        imported.move(imported.document.order[0], x: 5, y: 0)
         // The Product's files stay cached: undo history no longer decides what is kept.
         precondition(!imported.history.canRedo && imported.importedAssets.data(for: enriched.asset) == Data([2]))
 
@@ -79,14 +77,13 @@ import UIKit
         precondition(groupSession.document.namedGroups!.first { $0.id == group.id }!.name == "New title")
 
         let noOp = CanvasFixtures.session().0
-        noOp.select(noOp.document.order[0])
-        noOp.nudge(x: 0, y: 0)
+        noOp.move(noOp.document.order[0], x: 0, y: 0)
         precondition(!noOp.history.canUndo)
         let valid = noOp.document
         noOp.document.placements[noOp.document.order[0]]!.width = .nan
         noOp.complete(valid)
         precondition(noOp.document == valid && !noOp.history.canUndo)
 
-        print("History checks passed: movement, resizing, deletion, branching, camera independence and gesture cancellation.")
+        print("History checks passed: movement, deletion, branching, camera independence and gesture cancellation.")
     }
 }

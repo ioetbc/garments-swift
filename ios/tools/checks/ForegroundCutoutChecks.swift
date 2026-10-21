@@ -68,7 +68,7 @@ import Vision
         }, image: { _ in downloads += 1; return source }, cutout: { try await gate.run($0) })
         let record = SharedImport(url: "https://shop.example/shoes")
         try inbox.enqueue(record)
-        coordinator.setActive(true)
+        coordinator.checkInbox()
         try await waitFor { gate.calls == 1 }
         let id = coordinator.items[0].placementID!
         let productID = session.document.placements[id]!.productID
@@ -76,13 +76,6 @@ import Vision
         precondition(session.document.products[productID]!.originalAsset == original)
         precondition(session.importedAssets.data(for: original) == png)
         precondition(coordinator.items[0].stage == .removingBackground)
-        // The first provider deliberately ignores cancellation. Reactivation must
-        // await it before starting another extraction, and reuse the original.
-        coordinator.setActive(false); coordinator.setActive(true); coordinator.setActive(true)
-        precondition(coordinator.items[0].state == "Queued" && gate.calls == 1)
-        gate.finish(cutout)
-        try await waitFor { gate.calls == 2 }
-        precondition(session.document.products[productID]!.asset == original)
         precondition(fetches == 1 && downloads == 1 && gate.peak == 1)
         // Resolve an active interaction before rereading geometry.
         session.resolveInteraction = {
@@ -128,7 +121,7 @@ import Vision
         // Both deletion entry points discard late results without resurrecting the Sticker.
         for dismiss in [false, true] {
             let record = SharedImport(url: "https://shop.example/delete-\(dismiss)")
-            try inbox.enqueue(record); coordinator.setActive(true)
+            try inbox.enqueue(record); coordinator.checkInbox()
             try await waitFor { !gate.pending.isEmpty }
             let item = coordinator.items.last!
             let placementID = item.placementID!
@@ -140,7 +133,6 @@ import Vision
             precondition(session.document.placements[placementID] == nil)
             precondition(session.document.products[oldProduct.id]?.asset == oldProduct.asset)
         }
-        coordinator.setActive(false)
         // Empty and thrown extraction outcomes are successful original imports.
         for throwsError in [false, true] {
             var calls = 0, imageCalls = 0, cutoutCalls = 0
@@ -154,13 +146,12 @@ import Vision
                 return nil
             })
             try inbox.enqueue(SharedImport(url: "https://shop.example/fallback-\(throwsError)"))
-            fallback.setActive(true)
+            fallback.checkInbox()
             try await waitFor { fallback.items.first?.state == "Ready" }
             let item = fallback.items[0]
             precondition(item.failure == nil && item.note?.hasPrefix("Background kept:") == true && calls == 1)
-            precondition(item.diagnosticReport.contains("Original kept"))
-            if throwsError { precondition(item.diagnosticReport.contains("NSURLErrorDomain")) }
-            else { precondition(item.diagnosticReport.contains("no usable cutout")) }
+            if throwsError { precondition(item.note!.contains("NSURLErrorDomain")) }
+            else { precondition(item.note!.contains("no usable cutout")) }
             let product = session.document.products[session.document.placements[item.placementID!]!.productID]!
             precondition(product.asset == product.originalAsset)
             fallback.retry(item.id)
@@ -169,7 +160,6 @@ import Vision
             precondition(!fallback.items[0].canRetryBackground)
             let retriedProduct = session.document.products[session.document.placements[item.placementID!]!.productID]!
             precondition(retriedProduct.asset != retriedProduct.originalAsset)
-            fallback.setActive(false)
         }
         let fixture = CanvasFixtures.products[0]
         let decodedFixture = try JSONDecoder().decode(Product.self, from: JSONEncoder().encode(fixture))

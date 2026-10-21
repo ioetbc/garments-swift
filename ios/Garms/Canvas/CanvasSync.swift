@@ -3,7 +3,7 @@ import Foundation
 /// The boundary between a Canvas being edited on this device and where it is stored.
 /// Completions and handlers run on the main actor.
 @MainActor protocol CanvasSync: AnyObject {
-    /// Starts delivering whole-Canvas snapshots and connectivity changes.
+    /// Delivers the whole Canvas as last cached, then as stored, and connectivity changes.
     func connect(snapshot: @escaping @MainActor (CanvasRemote) -> Void, online: @escaping @MainActor (Bool) -> Void)
     /// Saves one committed edit's row changes in a single transaction.
     func apply(_ changes: CanvasChangeSet, completion: @escaping @MainActor (Error?) -> Void)

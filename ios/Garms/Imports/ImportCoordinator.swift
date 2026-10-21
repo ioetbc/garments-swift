@@ -9,11 +9,10 @@ import OSLog
         let id: UUID
         let record: SharedImport
         var photoLoader: (() async throws -> Data)?
+        /// A photo's listing is searched for once it is on the Canvas.
         var isPhoto = false
-        /// Photos marks this image as a Screenshot, so its listing is searched for once it is on the Canvas.
-        var isScreenshot = false
         var searched = false
-        /// Set when this link import resolves a Product Awaiting match: that Product, and its Screenshot to keep as a Photo.
+        /// Set when this link import is the listing found for an imported photo: that Product, and its photo to keep as a Photo.
         var resolving: (product: String, screenshot: String)?
         var displayName: String { isPhoto ? record.suggestedTitle ?? "Photo" : record.url }
         var placementID: String?
@@ -24,10 +23,6 @@ import OSLog
         var checkpoint: Checkpoint?
         var pendingImages: [String] = []
         var canRetryBackground: Bool { state == "Ready" && note != nil && checkpoint != nil }
-        var logs: [String] = ["Queued for import."]
-        var diagnosticReport: String {
-            "Import: \(id.uuidString)\nSource: \(isPhoto ? "Photos" : record.url)\nState: \(state)\n" + logs.joined(separator: "\n")
-        }
         var attempt = UUID()
     }
     private(set) var items: [Item] = []
@@ -38,7 +33,7 @@ import OSLog
         let total: Int
     }
     var progress: Progress? {
-        guard active, let item = items.first(where: { $0.state == "Processing" }) ?? batchIDs.compactMap({ id in items.first { $0.id == id && $0.state == "Queued" } }).first,
+        guard let item = items.first(where: { $0.state == "Processing" }) ?? batchIDs.compactMap({ id in items.first { $0.id == id && $0.state == "Queued" } }).first,
               let position = batchIDs.firstIndex(of: item.id) else { return nil }
         return Progress(item: item, current: position + 1, total: batchIDs.count)
     }
@@ -50,55 +45,32 @@ import OSLog
     @ObservationIgnored private weak var session: CanvasSession?
     @ObservationIgnored private var seen: Set<UUID> = []
     @ObservationIgnored private var processor: Task<Void, Never>?
-    @ObservationIgnored private var active = false
     @ObservationIgnored private var draining = false
     @ObservationIgnored let inbox: SharedImportInbox
     @ObservationIgnored private let acknowledge: (URL) throws -> Void
     @ObservationIgnored private let fetch: (String) async throws -> GarmsAPI.ImportedProduct
     @ObservationIgnored private let image: (String) async throws -> ImportedImageDownload.Artwork
     @ObservationIgnored private let cutout: ((ImportedImageDownload.Artwork) async throws -> ImportedImageDownload.Artwork?)?
-    @ObservationIgnored private let search: (ImportedImageDownload.Artwork) async throws -> Product.Match.Candidate?
+    @ObservationIgnored private let search: (ImportedImageDownload.Artwork) async throws -> GarmsAPI.Listing?
     init(session: CanvasSession, inbox: SharedImportInbox = .init(),
          acknowledge: ((URL) throws -> Void)? = nil,
          fetch: ((String) async throws -> GarmsAPI.ImportedProduct)? = nil,
          image: @escaping (String) async throws -> ImportedImageDownload.Artwork = { try await ImportedImageDownload.fetch($0) },
          cutout: ((ImportedImageDownload.Artwork) async throws -> ImportedImageDownload.Artwork?)? = nil,
-         search: ((ImportedImageDownload.Artwork) async throws -> Product.Match.Candidate?)? = nil) {
+         search: ((ImportedImageDownload.Artwork) async throws -> GarmsAPI.Listing?)? = nil) {
         self.session = session; self.inbox = inbox; self.image = image; self.cutout = cutout
         self.acknowledge = acknowledge ?? { try inbox.acknowledge($0) }
         self.fetch = fetch ?? { [server = session.server] in try await server.importProduct(url: $0) }
         self.search = search ?? { [server = session.server] in try await server.findListing(try await ImportedImageDownload.flattenedJPEG($0)) }
     }
-    func setActive(_ value: Bool) {
-        active = value
-        if value { drain(); start() }
-        else {
-            processor?.cancel()
-            for index in items.indices where items[index].state == "Processing" {
-                log(items[index].id, "Paused because the app became inactive; processing will resume.")
-                items[index].attempt = UUID(); items[index].state = "Queued"
-            }
-        }
+    /// Picks up links shared from other apps, then processes the queue.
+    func checkInbox() {
+        drain()
+        start()
     }
-    func loadTestLinks(_ links: [String]) {
-        do {
-            let links = try links.map(SharedLink.normalized)
-            var existing = Set(items.compactMap { try? SharedLink.normalized($0.record.url) })
-            for url in links where existing.insert(url).inserted {
-                let record = SharedImport(url: url)
-                // Bundled canvas fixtures may already use these URLs. Create a real
-                // import so the test still exercises fetching and image processing.
-                enqueue(Item(id: record.id, record: record))
-            }
-            start()
-        } catch { session?.error = error.localizedDescription }
-    }
-    /// `screenshotCheck` says how `screenshot` was decided, for the import log.
-    func importPhoto(title: String = "Imported photo", screenshot: Bool, screenshotCheck: String = "", load: @escaping () async throws -> Data) {
+    func importPhoto(title: String = "Imported photo", load: @escaping () async throws -> Data) {
         let record = SharedImport(url: "", suggestedTitle: title)
-        var item = Item(id: record.id, record: record, photoLoader: load, isPhoto: true, isScreenshot: screenshot)
-        if !screenshotCheck.isEmpty { item.logs.append(screenshotCheck + (screenshot ? "" : " Not searched for its listing.")) }
-        enqueue(item)
+        enqueue(Item(id: record.id, record: record, photoLoader: load, isPhoto: true))
         start()
     }
     private func drain() {
@@ -137,28 +109,21 @@ import OSLog
         enqueue(Item(id: record.id, record: record))
     }
     func start() {
-        guard active, session?.hasInitialLayout == true else { return }
-        // A search interrupted by the app closing never finished, so it runs now; a finished one never runs again.
-        for product in awaitingMatch where product.match?.status == .searching { runSearch(product.id) }
-        guard processor == nil else { return }
+        guard session?.hasInitialLayout == true, processor == nil else { return }
         processor = Task { [weak self] in
             guard let self else { return }
             await process()
             processor = nil
-            if active && items.contains(where: { $0.state == "Queued" }) { start() }
+            if items.contains(where: { $0.state == "Queued" }) { start() }
         }
     }
     private static let logger = Logger(subsystem: "f.garment-swift-2", category: "Import")
     private func log(_ id: UUID, _ message: String, warning: Bool = false) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        let line = "[\(Date().ISO8601Format())] \(warning ? "WARNING" : "INFO") \(message)"
-        items[index].logs.append(line)
-        if items[index].logs.count > 300 { items[index].logs.removeFirst() }
         if warning { Self.logger.warning("\(id.uuidString, privacy: .public) \(message, privacy: .public)") }
         else { Self.logger.info("\(id.uuidString, privacy: .public) \(message, privacy: .public)") }
     }
     private func process() async {
-        while active && !Task.isCancelled, let id = batchIDs.first(where: { id in items.contains { $0.id == id && $0.state == "Queued" } }),
+        while !Task.isCancelled, let id = batchIDs.first(where: { id in items.contains { $0.id == id && $0.state == "Queued" } }),
               let index = items.firstIndex(where: { $0.id == id }) {
             guard let session else { return }
             var placement = items[index].placementID
@@ -168,7 +133,7 @@ import OSLog
             let started = Date()
             log(id, "Starting processing attempt \(attempt.uuidString). Waiting for product artwork.")
             do {
-                // nil when resolving a Product Awaiting match: it keeps its Screenshot's Cutout.
+                // nil when importing a photo's found listing: it keeps the photo's Cutout.
                 let source: ImportedImageDownload.Artwork?
                 if let checkpoint = items[index].checkpoint, let data = session.importedAssets.data(for: checkpoint.asset) {
                     source = .init(data: data, aspect: checkpoint.aspect)
@@ -201,19 +166,18 @@ import OSLog
                 } else if items[index].resolving != nil, let placement {
                     items[index].checkpoint = nil
                     items[index].stage = .fetching
-                    log(id, "Fetching the listing for this Screenshot via the imports:product action → Firecrawl.")
+                    log(id, "Fetching the listing for this photo via the imports:product action → Firecrawl.")
                     let result = try await fetch(url)
                     try Task.checkCancellation()
                     guard valid(id, attempt, placement), let current = items.firstIndex(where: { $0.id == id }) else { continue }
-                    for line in result.diagnostics ?? [] { log(id, "Server: " + line) }
-                    // The Screenshot's Cutout stays on the Canvas, so the Sticker doesn't jump; the listing's images become Photos.
+                    // The photo's Cutout stays on the Canvas, so the Sticker doesn't jump; the listing's images become Photos.
                     var seenImages: Set<String> = []
                     items[current].pendingImages = (result.imageURLs ?? result.imageURL.map { [$0] } ?? []).filter { seenImages.insert($0).inserted }
                     guard session.updateImport(placement, title: result.title, price: result.price, artwork: nil) != nil else {
                         throw ImportedImageDownload.ImageError.invalid
                     }
                     source = nil
-                    log(id, "Listing details saved. Title: \(result.title ?? "missing"). Keeping the Screenshot's Cutout.")
+                    log(id, "Listing details saved. Title: \(result.title ?? "missing"). Keeping the photo's Cutout.")
                 } else {
                     items[index].checkpoint = nil
                     items[index].stage = .fetching
@@ -221,7 +185,6 @@ import OSLog
                     let result = try await fetch(url)
                     try Task.checkCancellation()
                     guard valid(id, attempt, placement) else { continue }
-                    for line in result.diagnostics ?? [] { log(id, "Server: " + line) }
                     log(id, "Metadata received. Title: \(result.title ?? "missing"). Image candidate: \(result.imageURL == nil ? "missing" : "present").")
                     guard let address = result.imageURLs?.first ?? result.imageURL else { throw ImportedImageDownload.ImageError.detail("The page returned no usable HTTPS product image URL. Cannot download product artwork.") }
                     guard let current = items.firstIndex(where: { $0.id == id }) else { continue }
@@ -303,13 +266,12 @@ import OSLog
                 items[current].stage = nil
                 log(id, "Import ready in \(String(format: "%.2f", Date().timeIntervalSince(started)))s.")
                 if let resolving = items[current].resolving {
-                    session.resolveMatch(resolving.product, url: url, screenshot: resolving.screenshot)
+                    session.attachListing(resolving.product, url: url, screenshot: resolving.screenshot)
                 }
-                if items[current].isScreenshot && !items[current].searched,
-                   let productID = session.document.placements[placement]?.productID {
+                if items[current].isPhoto && !items[current].searched {
                     items[current].searched = true
-                    log(id, "Screenshot: searching the web for its listing.")
-                    runSearch(productID)
+                    log(id, "Searching the web for this photo's listing.")
+                    runSearch(placement)
                 }
             } catch {
                 guard !Task.isCancelled, valid(id, attempt, placement), let current = items.firstIndex(where: { $0.id == id }) else { continue }
@@ -318,16 +280,11 @@ import OSLog
                 log(id, "Import failed during \(stage): " + details, warning: true)
                 items[current].stage = nil
                 items[current].state = "Failed"; items[current].failure = details
-                // Its Awaiting match row stands in for this row, so the failure shows there.
-                if let resolving = items[current].resolving, var match = session.document.products[resolving.product]?.match {
-                    match.status = .loadFailed
-                    session.setMatch(resolving.product, match)
-                }
             }
         }
     }
     private func valid(_ id: UUID, _ attempt: UUID, _ placement: String?) -> Bool {
-        guard active, items.contains(where: { $0.id == id && $0.attempt == attempt }) else { return false }
+        guard items.contains(where: { $0.id == id && $0.attempt == attempt }) else { return false }
         return placement.map { session?.document.placements[$0] != nil } ?? true
     }
     private func logCutoutDiagnostic(_ line: String, id: UUID, attempt: UUID, placement: String) {
@@ -354,83 +311,22 @@ import OSLog
         items.removeAll { $0.placementID == placement }
     }
 
-    // MARK: Awaiting match
+    /// Rows in the Imports sheet that are not finished.
+    var pendingCount: Int { items.filter { $0.state != "Ready" }.count }
 
-    /// Products imported from a Screenshot whose link is not yet resolved, oldest first. Each is a row in the Imports sheet.
-    var awaitingMatch: [Product] {
-        guard let session else { return [] }
-        _ = session.revision
-        let document = session.document
-        let z = Dictionary(document.placements.values.map { ($0.productID, $0.z) }, uniquingKeysWith: min)
-        return document.products.values.filter { $0.match != nil }
-            .sorted { (z[$0.id] ?? "", $0.id) < (z[$1.id] ?? "", $1.id) }
-    }
-    /// Import rows to show: a Product Awaiting match shows its own row instead of its imports.
-    var visibleItems: [Item] {
-        guard let session else { return items }
-        let awaiting = Set(awaitingMatch.map(\.id))
-        return items.filter { item in
-            !awaiting.contains(item.placementID.flatMap { session.document.placements[$0]?.productID } ?? "")
-        }
-    }
-    /// Rows in the Imports sheet that still need something: unfinished imports and Products Awaiting match.
-    var pendingCount: Int { visibleItems.filter { $0.state != "Ready" }.count + awaitingMatch.count }
-    /// Whether this Product's confirmed link is being imported.
-    func isLoadingMatch(_ productID: String) -> Bool {
-        items.contains { $0.resolving?.product == productID && ($0.state == "Queued" || $0.state == "Processing") }
-    }
-    /// A short note about the last resolution, such as a merge into an existing Product.
-    var notice: String?
-    @ObservationIgnored private var searching: Set<String> = []
-
-    private func runSearch(_ productID: String) {
-        guard let session, session.document.products[productID] != nil, searching.insert(productID).inserted else { return }
-        session.setMatch(productID, .init(status: .searching))
+    /// Searches the web for the listing an imported photo shows, and imports the one it finds onto that photo's Product.
+    /// Finding nothing, or failing, leaves the Product as it is.
+    private func runSearch(_ placement: String) {
+        guard let session, let product = session.document.placements[placement].flatMap({ session.document.products[$0.productID] }) else { return }
+        let photo = product.originalAsset ?? product.asset
         Task { [weak self, search] in
-            var match = Product.Match(status: .failed)
-            // The whole Screenshot, not the Cutout: the shop is read off its interface.
-            if let product = session.document.products[productID], let data = await session.importedAssets.load(product.originalAsset ?? product.asset) {
-                do {
-                    let candidate = try await search(.init(data: data, aspect: product.aspect))
-                    match = .init(status: candidate == nil ? .notFound : .found, candidate: candidate)
-                } catch {}
-            }
-            self?.searching.remove(productID)
-            // Resolved meanwhile (confirmed, pasted or skipped): the result is no longer wanted.
-            guard session.document.products[productID]?.match?.status == .searching else { return }
-            session.setMatch(productID, match)
-            // The search returns the one listing it is surest of: import it straight away.
-            if let found = match.candidate { self?.confirm(productID, url: found.url) }
+            // The whole photo, not the Cutout: the shop is read off its interface.
+            guard let data = await session.importedAssets.load(photo),
+                  let listing = try? await search(.init(data: data, aspect: product.aspect)),
+                  let self, session.document.placements[placement] != nil else { return }
+            let record = SharedImport(url: listing.url)
+            enqueue(Item(id: record.id, record: record, resolving: (product.id, photo), placementID: placement))
+            start()
         }
-    }
-    /// Searches again after a failed search.
-    func retrySearch(_ productID: String) {
-        guard session?.document.products[productID]?.match?.status == .failed else { return }
-        runSearch(productID)
-    }
-    /// Imports this link onto the Product Awaiting match, exactly as a shared link: the found listing or a pasted link.
-    /// A link already saved on another Product links the Sticker to that Product instead.
-    func confirm(_ productID: String, url: String) {
-        guard let session, let product = session.document.products[productID], product.match != nil, !isLoadingMatch(productID) else { return }
-        notice = nil
-        let url = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let key = try? SharedLink.normalized(url) else { notice = SharedLink.LinkError.invalid.localizedDescription; return }
-        if let existing = session.document.products.values.first(where: { $0.id != productID && (try? SharedLink.normalized($0.product_url)) == key }) {
-            session.mergeProduct(productID, into: existing.id)
-            notice = "Already saved — linked to your existing item."
-            return
-        }
-        // The import fills the Product through one of its Stickers; a Product that lost them all gets one back.
-        guard let sticker = session.document.placements.values.first(where: { $0.productID == productID })?.id
-                ?? session.placeSticker(of: productID) else { notice = "Couldn't place this item on the Canvas."; return }
-        items.removeAll { $0.resolving?.product == productID }
-        let record = SharedImport(url: url)
-        enqueue(Item(id: record.id, record: record, resolving: (productID, product.originalAsset ?? product.asset), placementID: sticker))
-        start()
-    }
-    /// None of these, or Skip: keeps the Product as imported, with no link.
-    func skipMatch(_ productID: String) {
-        notice = nil
-        session?.setMatch(productID, nil)
     }
 }

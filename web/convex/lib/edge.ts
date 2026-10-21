@@ -9,7 +9,7 @@ import { Db } from "./db";
 import { messageOf, type GarmsError } from "./errors";
 import { FileService } from "./file.service";
 import { ListingSearch } from "./listing.client";
-import { MatchService, SearchQuota } from "./match.service";
+import { MatchService } from "./match.service";
 import { ProductService } from "./product.service";
 import { ScreenshotReader } from "./screenshot.client";
 import { UserService } from "./user.service";
@@ -44,5 +44,5 @@ export const runMutation = <A>(ctx: MutationCtx, effect: Effect.Effect<A, GarmsE
 /** Runs an action's program once. Actions have no database; they reach it through mutations. */
 export const runAction = <A>(ctx: ActionCtx, effect: Effect.Effect<A, GarmsError, AccountService | MatchService>) =>
   run(Layer.merge(AccountService.layer, MatchService.layer).pipe(Layer.provide(Layer.mergeAll(
-    Auth.layer(ctx), DeletionBatches.layer(ctx), ClerkClient.layer, SearchQuota.layer(ctx), ScreenshotReader.layer, ListingSearch.layer,
+    Auth.layer(ctx), DeletionBatches.layer(ctx), ClerkClient.layer, ScreenshotReader.layer, ListingSearch.layer,
   ))), effect);

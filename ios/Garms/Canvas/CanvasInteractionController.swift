@@ -2,7 +2,7 @@ import Foundation
 import CoreGraphics
 
 @MainActor final class CanvasInteractionController {
-    enum State { case idle, cameraPan, cameraPinch, imageDrag, groupDrag, imagePinch }
+    enum State { case idle, cameraPan, cameraPinch, imageDrag, groupDrag }
     let session: CanvasSession
     private(set) var state: State = .idle {
         didSet {
@@ -29,7 +29,6 @@ import CoreGraphics
     init(session:CanvasSession) { self.session = session }
     private func beginObject(state:State, point:CGPoint) {
         if original == nil {
-            session.gestureInProgress = true
             historyBaseline = session.snapshot()
             original = session.document
             originalGroups = session.committedGroups
@@ -59,7 +58,6 @@ import CoreGraphics
         guard items.count > 1 else { return }
         guard session.isOnline else { session.error = CanvasSession.offlineMessage; return }
         session.select(nil)
-        session.gestureInProgress = true
         originalGroups = session.committedGroups; originalDetached = session.detachedLinks
         historyBaseline = session.snapshot()
         original = session.document; baseline = items; state = .groupDrag
@@ -200,43 +198,21 @@ import CoreGraphics
         guard let id = magneticTarget, let target = session.document.placements[id] else { return WorldPoint() }
         return CanvasGeometry.magneticOffset(item.bounds,toward:target.bounds,zoom:zoom)
     }
-    // Decide from the touches, never from a previously selected image.
-    // Both fingers must be inside one image, with at least one on opaque pixels.
-    func pinchTarget(_ points:[CGPoint], hit:(CGPoint)->String?) -> String? {
-        guard points.count == 2 else { return nil }
-        let hits = Set(points.compactMap(hit))
-        let world = points.map { session.camera.world($0,viewport:session.viewport) }
-        return session.document.order.reversed().first { id in
-            guard hits.contains(id), let p = session.document.placements[id] else { return false }
-            return world.allSatisfy { p.bounds.contains($0.cg) }
-        }
-    }
-    func prepareSecondFinger(target:String?, midpoint:CGPoint) {
-        // Offline, pinching a product zooms the read-only canvas instead.
-        if let target, session.isOnline {
-            if original != nil, state == .groupDrag || session.selection != target { finish() }
-            session.select(target); beginObject(state:.imagePinch,point:midpoint)
-        } else { beginCamera(point:midpoint) }
+    /// A second finger always moves the camera, ending any drag.
+    func prepareSecondFinger(midpoint:CGPoint) {
+        beginCamera(point:midpoint)
         session.render?()
     }
-    func pinchStart(midpoint:CGPoint, recognizerScale:Double, target:String?) {
-        if let target, session.isOnline {
-            session.select(target); beginObject(state:.imagePinch,point:midpoint)
-        } else {
-            if original != nil { finish() }
-            state = .cameraPinch; cameraStart = session.camera
-        }
+    func pinchStart(midpoint:CGPoint, recognizerScale:Double) {
+        if original != nil { finish() }
+        state = .cameraPinch; cameraStart = session.camera
         pinchAnchor = session.camera.world(midpoint,viewport:session.viewport)
         scaleStart = recognizerScale
     }
     func pinch(midpoint:CGPoint, scale:Double) {
-        let factor = scale/scaleStart
-        if state == .cameraPinch {
-            session.camera.pinch(anchor:pinchAnchor,midpoint:midpoint,zoom:cameraStart.zoom*factor,viewport:session.viewport)
-            session.cameraChanged()
-        } else if state == .imagePinch {
-            apply(CanvasGeometry.scaled(baseline,anchor:pinchAnchor,destination:session.camera.world(midpoint,viewport:session.viewport),scale:factor))
-        }
+        guard state == .cameraPinch else { return }
+        session.camera.pinch(anchor:pinchAnchor,midpoint:midpoint,zoom:cameraStart.zoom*scale/scaleStart,viewport:session.viewport)
+        session.cameraChanged()
     }
     private func apply(_ items:[StickerPlacement]) {
         guard items.allSatisfy(\.valid) else { return }
@@ -270,7 +246,6 @@ import CoreGraphics
         clear()
         if let before { session.complete(before, baseline: historyBefore) }
         else { session.render?() }
-        session.endGesture()
     }
     func cancel() {
         if let original {
@@ -280,7 +255,6 @@ import CoreGraphics
         }
         else if state == .cameraPan || state == .cameraPinch { session.camera = cameraStart }
         clear(); session.refresh()
-        session.endGesture()
     }
     private func clear() { historyBaseline = nil; session.elasticLink = nil; springRest = nil; dragSample = nil; releasedMembers = []; originalGroups = []; originalDetached = []; original = nil; baseline = []; magneticTarget = nil; session.groupingPreview = nil; state = .idle }
 }

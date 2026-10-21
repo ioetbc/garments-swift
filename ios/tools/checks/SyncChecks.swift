@@ -2,13 +2,12 @@ import Foundation
 
 @main struct SyncChecks {
     @MainActor static func main() {
-        // A nudge saves exactly that Sticker; undo saves the inverse.
+        // A move saves exactly that Sticker; undo saves the inverse.
         do {
             let (session, sync) = CanvasFixtures.session(laidOut: true)
             let id = session.document.order[0]
             let original = session.document.placements[id]!
-            session.select(id)
-            session.nudge(x: 30, y: 10)
+            session.move(id, x: 30, y: 10)
             precondition(sync.applied.count == 1)
             let moved = sync.applied[0]
             precondition(moved.stickers.map(\.key) == [id] && moved.stickers[0].x == original.center.x + 30)
@@ -17,51 +16,14 @@ import Foundation
             precondition(sync.applied.count == 2 && sync.applied[1].stickers == [CanvasRemote.Sticker(original)])
         }
 
-        // A snapshot from another device waits for the gesture under the finger to finish.
-        do {
-            let (session, sync) = CanvasFixtures.session(laidOut: true)
-            let interaction = CanvasInteractionController(session: session)
-            let target = session.document.order[0]
-            let other = session.document.order[1]
-            let start = session.camera.screen(session.document.placements[target]!.center, viewport: session.viewport)
-            interaction.liftImage(target, point: start)
-            interaction.drag(point: CGPoint(x: start.x + 40, y: start.y + 300))
-            var remote = sync.remote
-            let index = remote.stickers.firstIndex { $0.key == other }!
-            let before = remote.stickers[index].x
-            remote.stickers[index].x += 500
-            sync.push(remote)
-            precondition(session.document.placements[other]!.center.x == before, "applied mid-gesture")
-            interaction.finish()
-            precondition(session.document.placements[other]!.center.x == remote.stickers[index].x, "not applied after the gesture")
-        }
-
-        // A snapshot that predates this device's in-flight save is held until the save lands.
-        do {
-            let (session, sync) = CanvasFixtures.session(laidOut: true)
-            let id = session.document.order[0]
-            session.select(id)
-            sync.holdWrites = true
-            session.nudge(x: 30, y: 0)
-            let nudged = session.document.placements[id]!
-            sync.push(sync.remote)
-            precondition(session.document.placements[id] == nudged)
-            var saved = sync.remote
-            saved.stickers[saved.stickers.firstIndex { $0.key == id }!] = .init(nudged)
-            sync.push(saved)
-            sync.completeWrites()
-            precondition(session.document.placements[id] == nudged)
-        }
-
         // Offline, the Canvas is read-only and says why.
         do {
             let (session, sync) = CanvasFixtures.session(laidOut: true)
             let id = session.document.order[0]
-            session.select(id)
-            session.nudge(x: 30, y: 0)
+            session.move(id, x: 30, y: 0)
             sync.setOnline(false)
             let document = session.document
-            session.nudge(x: 30, y: 0)
+            session.move(id, x: 30, y: 0)
             session.undo()
             session.updateProductNotes(session.document.placements[id]!.productID, notes: "Offline note")
             session.deleteProduct(session.document.placements[id]!.productID)
@@ -93,15 +55,8 @@ import Foundation
             precondition(!session.history.canUndo)
         }
 
-        // Bringing a Sticker to the front rewrites only its own stacking key.
-        do {
-            let (session, sync) = CanvasFixtures.session(laidOut: true)
-            let bottom = session.document.order[0]
-            session.bringToFront(bottom)
-            precondition(session.document.order.last == bottom)
-            precondition(sync.applied.count == 1 && sync.applied[0].stickers.map(\.key) == [bottom])
-            precondition(CanvasStacking.after("0099") == "009A" && CanvasStacking.after("z") == "z1" && "z" < CanvasStacking.after("z"))
-        }
+        // New Stickers stack above every other.
+        precondition(CanvasStacking.after("0099") == "009A" && CanvasStacking.after("z") == "z1" && "z" < CanvasStacking.after("z"))
 
         // Panning saves the Viewport, never an edit or an undo step.
         do {
@@ -143,6 +98,6 @@ import Foundation
             precondition(coat.matchesSearch("overshirt") && !CanvasFixtures.products[0].matchesSearch("overshirt"))
         }
 
-        print("Sync checks passed: change sets, undo, gestures, in-flight saves, offline, deletion, stacking, viewport, round trip, totals and search")
+        print("Sync checks passed: change sets, undo, offline, deletion, stacking, viewport, round trip, totals and search")
     }
 }

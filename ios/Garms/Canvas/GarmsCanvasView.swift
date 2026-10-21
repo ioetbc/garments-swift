@@ -35,7 +35,7 @@ import UIKit
     override func canPrevent(_ prevented:UIGestureRecognizer) -> Bool { false }
     override func canBePrevented(by preventing:UIGestureRecognizer) -> Bool { false }
 }
-@MainActor private final class CanvasGroupAccessibilityElement: UIAccessibilityElement {
+@MainActor private final class CanvasAccessibilityElement: UIAccessibilityElement {
     var activate: (() -> Void)?
     override func accessibilityActivate() -> Bool { activate?(); return true }
 }
@@ -47,7 +47,6 @@ import UIKit
     let interaction: CanvasInteractionController
     private let touchObserver = CanvasTouchObserver()
     private var firstPoint = CGPoint.zero
-    private var secondTarget: String?
     private var multiTouch = false
     private var waitForLift = false
     private var pinchActive = false
@@ -57,7 +56,7 @@ import UIKit
     private var pinchRecognizer: UIPinchGestureRecognizer!
     private var holdRecognizer: UILongPressGestureRecognizer!
     private let pickupFeedback = UIImpactFeedbackGenerator(style:.medium)
-    private var elements: [String:UIAccessibilityElement] = [:]
+    private var elements: [String:CanvasAccessibilityElement] = [:]
     private var notificationTokens: [NSObjectProtocol] = []
     private var settle: Task<Void,Never>?
     private var edgeScrollLink: CADisplayLink?
@@ -123,15 +122,13 @@ import UIKit
     private func touchesArrived(_ points:[CGPoint]) {
         stopGlide()
         if points.count == 1 {
-            firstPoint = points[0]; manipulated = false; secondTarget = nil
+            firstPoint = points[0]; manipulated = false
             if hit(firstPoint) != nil || dragGroup(at:firstPoint) != nil { pickupFeedback.prepare() }
         }
         guard points.count == 2, !multiTouch, !waitForLift else { return }
         stopEdgeScroll()
         multiTouch = true; manipulated = true
-        secondTarget = interaction.pinchTarget(points,hit:hit)
-        let midpoint = CGPoint(x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2)
-        interaction.prepareSecondFinger(target:secondTarget,midpoint:midpoint)
+        interaction.prepareSecondFinger(midpoint:CGPoint(x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2))
     }
     func hit(_ point:CGPoint) -> String? {
         let world = session.camera.world(point,viewport:bounds.size)
@@ -200,10 +197,10 @@ import UIKit
     }
     @objc private func twoPanned(_ r:UIPanGestureRecognizer) {
         // The touch observer may set waitForLift before UIKit delivers .ended.
-        if r.state == .ended, !pinchActive, secondTarget == nil, interaction.state == .cameraPan {
+        if r.state == .ended, !pinchActive, interaction.state == .cameraPan {
             finishCameraPan(r); waitForLift = true; return
         }
-        guard !pinchActive, !waitForLift, secondTarget == nil else { return }
+        guard !pinchActive, !waitForLift else { return }
         switch r.state {
         case .began:
             guard r.numberOfTouches == 2 else { return }
@@ -220,7 +217,7 @@ import UIKit
         switch r.state {
         case .began:
             guard !waitForLift, r.numberOfTouches == 2 else { return }; manipulated = true; pinchActive = true
-            interaction.pinchStart(midpoint:r.location(in:self),recognizerScale:r.scale,target:secondTarget)
+            interaction.pinchStart(midpoint:r.location(in:self),recognizerScale:r.scale)
         case .changed:
             // On release UIKit can still report a change with only one touch.
             // Its location is no longer the pinch midpoint, so keep the last pose.
@@ -332,18 +329,15 @@ import UIKit
         for id in Array(elements.keys) where !ids.contains(id) { elements[id] = nil }
         for id in ids {
             guard let p = session.document.placements[id], let product = session.document.products[p.productID] else { continue }
-            let element = elements[id] ?? UIAccessibilityElement(accessibilityContainer:self)
+            let element = elements[id] ?? CanvasAccessibilityElement(accessibilityContainer:self)
             element.accessibilityLabel = [product.title, product.category].compactMap { $0 }.joined(separator: ", ")
             element.accessibilityTraits = .button
             element.accessibilityFrameInContainerSpace = overlay.screenRect(p.bounds,session)
-            func action(_ title:String,_ body:@escaping (CanvasSession)->Void) -> UIAccessibilityCustomAction {
-                UIAccessibilityCustomAction(name:title) { [weak self] _ in guard let self else { return false }; self.cancelInteraction(); self.session.select(id); body(self.session); return true }
-            }
-            element.accessibilityCustomActions = [action("Select") { $0.select(id,showDetails:true) }, action("Move right") { $0.nudge(x:20,y:0) },action("Move left") { $0.nudge(x:-20,y:0) },action("Move up") { $0.nudge(x:0,y:-20) },action("Move down") { $0.nudge(x:0,y:20) },action("Enlarge") { $0.resize(1.1) }, action("Shrink") { $0.resize(1/1.1) }]
+            element.activate = { [weak self] in self?.session.select(id,showDetails:true) }
             elements[id] = element
         }
         let groupElements = overlay.titles.map { title in
-            let element = CanvasGroupAccessibilityElement(accessibilityContainer: self)
+            let element = CanvasAccessibilityElement(accessibilityContainer: self)
             element.accessibilityLabel = title.group.name
             element.accessibilityHint = "Edit group name and background colour"
             element.accessibilityTraits = .button

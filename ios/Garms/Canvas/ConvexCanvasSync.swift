@@ -4,11 +4,13 @@ import ConvexMobile
 
 extension CanvasChangeSet: ConvexEncodable {}
 
-/// CanvasSync over Convex: one subscription to the whole Canvas and one mutation per committed edit.
+/// CanvasSync over Convex: the whole Canvas loaded once, and one mutation per committed edit.
 /// The last snapshot is kept on disk so the Canvas can be viewed offline.
 @MainActor final class ConvexCanvasSync: CanvasSync {
     private let client: ConvexClientWithAuth<String>
     private var canvas: String?
+    /// The server's Canvas has been applied, so edits made from here on build on it.
+    private var loaded = false
     private var connected = false
     private var authenticated = false
     private var subscriptions: Set<AnyCancellable> = []
@@ -20,7 +22,7 @@ extension CanvasChangeSet: ConvexEncodable {}
         if let data = try? Data(contentsOf: cache), let cached = try? JSONDecoder().decode(CanvasRemote.self, from: data) {
             snapshot(cached)
         }
-        // Editable only once connected and the Canvas is known, so no edit is sent before it can be saved.
+        // Editable only once connected and the server's Canvas is applied, so no edit is sent before it can be saved.
         online(false)
         client.authState
             .receive(on: DispatchQueue.main)
@@ -33,7 +35,7 @@ extension CanvasChangeSet: ConvexEncodable {}
             .sink { [weak self] state in
                 guard let self else { return }
                 connected = state == .connected
-                online(connected && canvas != nil)
+                online(connected && loaded)
             }
             .store(in: &subscriptions)
         Task { [weak self, client] in
@@ -52,12 +54,18 @@ extension CanvasChangeSet: ConvexEncodable {}
             }
             guard let self, let canvas else { return }
             self.canvas = canvas
-            online(self.connected)
+            // ponytail: no live updates; only the first snapshot is applied, later ones (other devices' edits)
+            // only refresh the offline cache and show on next launch.
             self.client.subscribe(to: "canvases:load", with: ["canvas": canvas], yielding: CanvasRemote.self)
                 .receive(on: DispatchQueue.main)
                 .sink(receiveCompletion: { _ in }, receiveValue: { [weak self] remote in
-                    snapshot(remote)
-                    guard let self, let data = try? JSONEncoder().encode(remote) else { return }
+                    guard let self else { return }
+                    if !loaded {
+                        loaded = true
+                        snapshot(remote)
+                        online(connected)
+                    }
+                    guard let data = try? JSONEncoder().encode(remote) else { return }
                     try? FileManager.default.createDirectory(at: LocalUser.directory, withIntermediateDirectories: true)
                     try? data.write(to: self.cache, options: .atomic)
                 })

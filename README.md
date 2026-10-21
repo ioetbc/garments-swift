@@ -1,6 +1,6 @@
 # Garms
 
-One repository for the native SwiftUI clothing canvas app and the Next.js website/API. Each app has its own build and dependencies; no shared-package or monorepo tooling is required.
+One repository for the native SwiftUI clothing canvas app and its Convex backend. Each app has its own build and dependencies; no shared-package or monorepo tooling is required.
 
 ## Layout
 
@@ -12,9 +12,8 @@ ios/
     Canvas/       Canvas models, rendering, gestures and details
     Assets.xcassets/
   tools/          Standalone checks (their fixtures live in tools/checks/support)
-web/              Next.js website and API routes
-  convex/         Convex backend: schema, per-User functions and tests
-  seed/           Developer-only sample Products and the seed script
+web/              Convex backend
+  convex/         Schema, per-User functions and tests
 docs/             Product specification, research and feature plans
 ```
 
@@ -28,21 +27,7 @@ Run from this repository's root:
 xcodebuild -project ios/Garms.xcodeproj -scheme Garms -destination 'generic/platform=iOS' -derivedDataPath /tmp/garms-ios-build CODE_SIGNING_ALLOWED=NO build
 ```
 
-## Website and API
-
-Start the API from this repository's root:
-
-```sh
-cd web
-bun install
-bun run dev --hostname 0.0.0.0 --port 3000
-```
-
-`GET /api/health` returns `{"status":"ok","message":"Connected to Garms."}` with caching disabled. It is a public connectivity check and returns no user data or credentials.
-
-Imports and "Send log" run as Convex actions (`web/convex/imports.ts`) for the signed-in User, so the app needs no API server or tunnel. Set `FIRECRAWL_API_KEY` and `AI_GATEWAY_API_KEY` on each Convex deployment (`npx convex env set`). **Test connection** in a product's details drawer reports whether the app is connected to Convex; sent logs appear in the Convex dashboard logs.
-
-Server-only credentials belong in `web/.env.local` locally and the hosting provider's environment settings when deployed. Configure the website deployment's root directory as `web`. The prototype shared-link endpoint is described below.
+Imports run as Convex actions (`web/convex/imports.ts`) for the signed-in User, so the app needs no API server or tunnel. Set `FIRECRAWL_API_KEY` and `AI_GATEWAY_API_KEY` on each Convex deployment (`npx convex env set`).
 
 ## Convex backend
 
@@ -57,14 +42,11 @@ as a native application, and activate the Convex integration.
 cd web
 npx convex env set CLERK_FRONTEND_API_URL https://<instance>.clerk.accounts.dev  # the paired Clerk instance
 npx convex env set CLERK_SECRET_KEY sk_test_…  # lets deleting a User remove their Clerk user
-npx convex env set AI_GATEWAY_API_KEY …  # reads the shop and title off a Screenshot
+npx convex env set AI_GATEWAY_API_KEY …  # reads the shop and title off an imported photo
 npx convex dev                         # local or dev deployment; regenerates convex/_generated
-npx vitest run                         # backend tests (convex-test, in memory)
-bun seed/seed-canvas.ts "<tokenIdentifier>"  # optional: fill your User with the sample Products
+bun run test                           # backend tests (convex-test, in memory)
+bun run typecheck
 ```
-
-To seed, sign in on the app once, then copy your `tokenIdentifier` from the `users` table
-in the Convex dashboard.
 
 The iOS app reads `CONVEX_URL` and `CLERK_PUBLISHABLE_KEY` from
 `ios/Configuration/Debug-Info.plist` (Clerk development, Convex dev) or
@@ -94,17 +76,16 @@ then tap **Add**. Each selected photo becomes a separate item in selection order
 Garms loads and normalises the image to at most 2,048 pixels, then runs the same
 background removal and canvas flow as link imports. The original remains in
 product details. Loading failures support Retry and Dismiss; background removal
-failures retain the original and support **Retry background removal**. Processing
-pauses while the app is inactive and resumes when it returns.
+failures retain the original and support **Retry background removal**.
 
-Photo imports use the system photo picker, need no API server, and have no listing
-URL. Photos that the library marks as **Screenshots** (Garms asks for photo
-library access to tell) are the exception: once the Sticker is on the Canvas, the whole
-Screenshot, flattened onto white, is sent to the `matches:search` Convex action. A vision
-model behind the AI Gateway reads the shop, its website and the product title off it, then
-Firecrawl searches that title on the shop's site (signed-in Users only, 30 searches per User per day). The listing found is imported
-straight away through the `imports:product` action, exactly like a shared link. When nothing is found or the
-import fails, the Product stays **Awaiting match** until the User pastes a link in the Imports sheet or skips. As with link imports, items remain in session memory
+Photo imports use the system photo picker and need no API server. Once a photo's Sticker
+is on the Canvas, the whole photo, flattened onto white, is sent to the `matches:search`
+Convex action. A vision model behind the AI Gateway reads the shop, its website and the
+product title off it, then Firecrawl searches that title on the shop's site (signed-in
+Users only). The listing found is imported straight away through the `imports:product`
+action, exactly like a shared link, keeping the photo as the Cutout and first Photo. When
+nothing is found the Product stays as imported, with no link; a failed listing import shows
+in the Imports sheet with Retry. As with link imports, items remain in session memory
 and are lost when the app is terminated. Each photo's detected subjects stay
 together in one sticker; selecting individual garments within a photo is not supported.
 
@@ -131,8 +112,7 @@ resume from the pending photo without duplicating photos already saved.
 
 The Imports sheet shows “Removing background…” during extraction. If extraction
 fails or finds no usable foreground, the original stays visible and the import
-finishes Ready with “Background kept” and the specific reason. Inactivity pauses work; returning resumes
-extraction from the original without repeating the download. All image assets live
+finishes Ready with “Background kept” and the specific reason. All image assets live
 in session memory, survive drawing-cache eviction, and are released when no product
 references them. “Retry background removal” retries a retained original without
 fetching the listing or downloading its image again. Garment-only extraction is not supported.
@@ -150,9 +130,9 @@ team needs different identifiers, update both entitlements and the single
 signed build on an iPhone; an unsigned build cannot validate App Group access or
 Share Sheet activation. Garms may need enabling under the Share Sheet's **More**.
 
-Configure `FIRECRAWL_API_KEY` in the server's environment. `POST /api/import`
+Configure `FIRECRAWL_API_KEY` on the Convex deployment. The `imports:product` action
 returns the submitted URL, nullable title, nullable HTTPS `imageURL`, and an ordered,
-deduplicated `imageURLs` gallery. `imageURL` remains the first entry for older clients.
+deduplicated `imageURLs` gallery and a nullable Price. `imageURL` is the gallery's first entry.
 Image selection prefers Open Graph metadata, then Twitter image metadata and raw
 HTML social tags, with a first-listing-photo fallback for Vinted UK. Every candidate
 must be an absolute public HTTPS URL without credentials; arbitrary page images
@@ -163,9 +143,7 @@ social image is available, the gallery contains that single image.
 For SSENSE, the importer uses rendered images matching the current product SKU,
 orders them by photo number, and excludes the unexpanded `__IMAGE_PARAMS__` URL
 in its structured data. Different sizes of the same photo appear only once.
-Use
-the physical-device API address instructions above; the extension needs no API
-configuration. Imported prices are unknown, and group totals identify known-price
+The extension needs no server configuration. Imported prices are unknown, and group totals identify known-price
 subtotals when needed.
 
 **Memory only:** the inbox temporarily retains unconsumed URL handoffs. Once the
@@ -209,11 +187,9 @@ zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/MagneticDragChecks.swi
 
 The import checks inject temporary inbox directories and API/image/cutout state; they
 cover layout gating, deduplication, malformed records, failed acknowledgement,
-pause/resume, explicit retries, stale results, geometry preservation and source
-artwork surviving derived-cache clearing. Backend checks run with `cd web && bun test`;
-also run `bunx tsc --noEmit`, `bun run lint` and `bun run build`. In environments
-where Turbopack cannot bind its worker port, `bun run build --webpack` provides a
-production route-integration check.
+explicit retries, stale results, geometry preservation and source
+artwork surviving derived-cache clearing. Backend checks run with `cd web && bun run test`
+and `bun run typecheck`.
 
 Background-removal validation (26 September 2026): `ImportSessionChecks`,
 `ForegroundCutoutChecks`, `InitialLayoutChecks`, `SearchChecks` and
@@ -221,7 +197,7 @@ Background-removal validation (26 September 2026): `ImportSessionChecks`,
 `xcodebuild -project ios/Garms.xcodeproj -scheme Garms -destination 'generic/platform=iOS' -derivedDataPath /tmp/garms-ios-build CODE_SIGNING_ALLOWED=NO build`.
 The magnetic-drag check still fails at its documented line 86 cancellation assertion.
 The new checks cover original publication, successful replacement, fallback,
-cancellation-insensitive extraction, resume without network repetition, late results
+late results
 after deletion/dismissal, shared asset ownership, and alpha-aware hit testing.
 They inject extraction results and do not establish Vision segmentation quality.
 
@@ -248,22 +224,9 @@ the relevant state/alpha boundaries were checked deterministically on Catalyst.
 
 ### Import diagnostics
 
-Each Imports entry includes an expandable **Processing log** and **Copy log** button.
-The copied report includes the product URL, import ID, timestamps, server Firecrawl
-request ID, markdown length, metadata/image selection, image download/decode,
-Vision background removal, canvas installation, retries and pause/resume events.
-Failures retain their descriptions, domains, codes and underlying error details.
-“Background kept” means the original was retained because no usable cutout could
-be produced or installed; the warning now explains why. Logs remain in session
-memory (up to 300 entries per import) and are also emitted to the iOS console.
-Server extraction logs appear in the API terminal and are returned to the app on
-success and failure. Server logs omit page contents and redact provider keys and
-URLs in provider errors. Restart the API and rebuild the app for full diagnostics.
-
-Use **Send log to Mac** on an import to send its current report to
-`POST /api/import/diagnostics`. The terminal running the configured API server
-prints it between `GARMS IMPORT LOG FROM PHONE` / `END GARMS IMPORT LOG` markers.
-The app confirms delivery or displays the send error. This works through the same
-API base URL/tunnel as product imports and does not depend on Universal Clipboard.
-**Copy log** still copies locally on the phone. Reports include the product URL
-and are sent only when you press the button (256 KB maximum).
+Each import step is logged to the iOS console (subsystem `f.garment-swift-2`, category
+`Import`). Failures shown in the Imports sheet keep their descriptions, domains, codes and
+underlying error details. “Background kept” means the original was retained because no
+usable cutout could be produced or installed; the note explains why.
+Server-side scrape and extraction steps (`Product import: …`) appear in the Convex
+dashboard logs; they omit page contents.

@@ -10,12 +10,8 @@ import Observation
     private(set) var hasLoaded = false
     /// Offline, the Canvas stays viewable but every edit is refused.
     private(set) var isOnline = true
-    /// Set by the interaction controller so remote snapshots never land under a finger.
-    @ObservationIgnored var gestureInProgress = false
     @ObservationIgnored let sync: CanvasSync
     @ObservationIgnored let server: GarmsServer
-    @ObservationIgnored private var pendingRemote: CanvasRemote?
-    @ObservationIgnored private var writesInFlight = 0
     @ObservationIgnored private var viewportSave: Task<Void, Never>?
     static let offlineMessage = "You're offline, so the canvas is read-only. Your changes can't be saved until you reconnect."
     @ObservationIgnored let index = CanvasSpatialIndex()
@@ -33,8 +29,6 @@ import Observation
     var selection: String?
     var inspectedPlacement: StickerPlacement?
     var inspectedGroup: CanvasNamedGroup?
-    /// A Product Awaiting match whose row in the Imports sheet a tap on its Sticker asked to show.
-    var revealedMatch: String?
     var error: String?
 
     func opacity(for placement: StickerPlacement) -> Float {
@@ -85,11 +79,9 @@ import Observation
         imports.start()
     }
 
-    /// Applies a stored snapshot, unless a gesture or one of this device's writes is still in flight.
+    /// Applies a stored snapshot: the cached one, then the server's once at launch.
     func receive(_ remote: CanvasRemote) {
         importedAssets.urls.merge(remote.files.compactMapValues(URL.init(string:))) { $1 }
-        guard !gestureInProgress, writesInFlight == 0 else { pendingRemote = remote; return }
-        pendingRemote = nil
         if !hasLoaded {
             let opened = CanvasCamera(center: .init(x: remote.viewport.x, y: remote.viewport.y), zoom: remote.viewport.zoom)
             camera = opened.valid ? opened : CanvasCamera()
@@ -107,14 +99,6 @@ import Observation
         refresh()
         imports.start()
     }
-    /// Called when a gesture has committed or been cancelled.
-    func endGesture() {
-        gestureInProgress = false
-        flushRemote()
-    }
-    private func flushRemote() {
-        if let pendingRemote, !gestureInProgress, writesInFlight == 0 { receive(pendingRemote) }
-    }
     /// Refuses an edit while offline, saying why.
     private func editable() -> Bool {
         if !isOnline { error = Self.offlineMessage }
@@ -124,12 +108,8 @@ import Observation
     private func save(from before: CanvasDocument, _ beforeLinks: Set<CanvasGroupLink>) {
         let changes = CanvasChangeSet(from: before, beforeLinks, to: document, detachedLinks)
         guard !changes.isEmpty else { return }
-        writesInFlight += 1
         sync.apply(changes) { [weak self] failure in
-            guard let self else { return }
-            writesInFlight -= 1
-            if let failure { error = "Your last change couldn't be saved, so this canvas may not match your other devices. \(failure.localizedDescription)" }
-            flushRemote()
+            if let failure { self?.error = "Your last change couldn't be saved, so this canvas may not match your other devices. \(failure.localizedDescription)" }
         }
     }
     func refresh(rebuild: Bool = true) {
@@ -207,21 +187,14 @@ import Observation
 
     func select(_ id: String?, showDetails: Bool = false) {
         selection = id
-        let placement = showDetails ? id.flatMap { document.placements[$0] } : nil
-        // A Product Awaiting match is resolved in the Imports sheet, not its details.
-        if let placement, document.products[placement.productID]?.match != nil {
-            inspectedPlacement = nil
-            revealedMatch = placement.productID
-        } else {
-            inspectedPlacement = placement
-        }
+        inspectedPlacement = showDetails ? id.flatMap { document.placements[$0] } : nil
         render?()
     }
     func deletePlacement(_ id: String) {
         resolveInteraction?()
         guard document.placements[id] != nil else { return }
         let before = document
-        // The Product stays: it is still findable through search and can be placed again.
+        // The Product stays; sharing its link again places it again.
         document.placements[id] = nil
         complete(before)
         if document.placements[id] == nil { imports.deleted(id) }
@@ -239,21 +212,9 @@ import Observation
         inspectedPlacement = nil
         refresh()
         history.clear()
-        writesInFlight += 1
         sync.deleteProduct(id) { [weak self] failure in
-            guard let self else { return }
-            writesInFlight -= 1
-            if let failure { error = "The product couldn't be deleted. \(failure.localizedDescription)" }
-            flushRemote()
+            if let failure { self?.error = "The product couldn't be deleted. \(failure.localizedDescription)" }
         }
-    }
-    /// Draws the Sticker above every other; only its own stacking key changes.
-    func bringToFront(_ id: String) {
-        guard document.placements[id] != nil, document.order.last != id else { return }
-        let before = document
-        let top = document.topZ
-        document.placements[id]?.z = top
-        complete(before)
     }
     /// Places another Sticker of an existing Product in Recent uploads.
     @discardableResult
@@ -402,52 +363,16 @@ import Observation
         complete(before, recordHistory: false)
         return document.products[product.id] == product ? product.asset : nil
     }
-    /// Records the search state of a Product imported from a Screenshot; nil ends Awaiting match.
-    /// A fact about the import, not an undoable edit.
-    func setMatch(_ productID: String, _ match: Product.Match?) {
-        guard document.products[productID] != nil, document.products[productID]?.match != match else { return }
-        resolveInteraction?()
-        let before = document
-        document.products[productID]?.match = match
-        complete(before, recordHistory: false)
-    }
-    /// Ends Awaiting match once its listing has been imported onto the Product like a shared link:
-    /// records the link and keeps the Screenshot as the first Photo.
-    func resolveMatch(_ productID: String, url: String, screenshot: String) {
-        guard var product = document.products[productID], product.match != nil else { return }
+    /// Records the listing found for an imported photo once it has been imported onto the Product like a shared link,
+    /// keeping the photo as the first Photo.
+    func attachListing(_ productID: String, url: String, screenshot: String) {
+        guard var product = document.products[productID] else { return }
         resolveInteraction?()
         let before = document
         product.product_url = url
         product.galleryAssets.insert(screenshot, at: 0)
-        product.match = nil
         document.products[productID] = product
         complete(before, recordHistory: false)
-    }
-    /// Re-points every Sticker of `productID` at `existing`, which already holds the same link, and deletes `productID`.
-    /// Stickers stay where they are.
-    func mergeProduct(_ productID: String, into existing: String) {
-        guard productID != existing, document.products[productID] != nil, let target = document.products[existing] else { return }
-        resolveInteraction?()
-        let before = document
-        for (id, placement) in document.placements where placement.productID == productID {
-            document.placements[id]?.productID = existing
-            document.placements[id]?.fit(aspect: target.aspect)
-        }
-        document.products[productID] = nil
-        complete(before)
-    }
-    // These also provide non-gesture equivalents for VoiceOver.
-    func nudge(x: Double, y: Double) {
-        guard let p = selected.first else { return }
-        let before = document
-        document.placements[p.id]?.center = p.center + .init(x:x/camera.zoom,y:y/camera.zoom)
-        complete(before)
-    }
-    func resize(_ factor: Double) {
-        guard let p = selected.first else { return }
-        let before = document
-        document.placements[p.id] = CanvasGeometry.scaled([p],anchor:p.center,destination:p.center,scale:factor).first
-        complete(before)
     }
     /// Panning and zooming render immediately and save the Viewport once it settles, outside undo.
     func cameraChanged() {

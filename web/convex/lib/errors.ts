@@ -24,9 +24,6 @@ export class FileAlreadyAttached extends Data.TaggedError("FileAlreadyAttached")
 /** Clerk did not delete the User's sign-in after their data was deleted. */
 export class ClerkDeleteFailed extends Data.TaggedError("ClerkDeleteFailed")<{ readonly cause: unknown }> {}
 
-/** The User has used up today's Screenshot searches. */
-export class SearchLimited extends Data.TaggedError("SearchLimited") {}
-
 /** The vision model or the web search could not be reached or refused the search. */
 export class SearchFailed extends Data.TaggedError("SearchFailed")<{ readonly cause: unknown }> {}
 
@@ -37,7 +34,7 @@ export class ImportFailed extends Data.TaggedError("ImportFailed")<{ readonly re
 export type GarmsError =
   | NotSignedIn | CanvasNotFound | ProductNotFound | ForeignRows
   | InvalidInput | FileKeyTaken | FileAlreadyAttached | ClerkDeleteFailed
-  | SearchLimited | SearchFailed | ImportFailed;
+  | SearchFailed | ImportFailed;
 
 /** The message the client sees for each failure. */
 export function messageOf(error: GarmsError): string {
@@ -50,7 +47,6 @@ export function messageOf(error: GarmsError): string {
     case "FileKeyTaken": return "File key is taken.";
     case "FileAlreadyAttached": return "File is already attached.";
     case "ClerkDeleteFailed": return "Your data was deleted, but your sign-in could not be removed. Delete your account again to finish.";
-    case "SearchLimited": return "You've reached today's limit for finding listings. Try again tomorrow, or paste a link.";
     case "SearchFailed": return "Couldn't search for this listing. Try again.";
     case "ImportFailed": return {
       unreachable: "The product page could not be accessed.",

@@ -13,16 +13,6 @@ export const candidate = v.object({
   domain: v.string(),
 });
 
-/** Present exactly while a Product imported from a Screenshot is Awaiting match. */
-export const match = v.object({
-  status: v.union(
-    v.literal("searching"), v.literal("found"), v.literal("none"),
-    v.literal("failed"), v.literal("loadFailed"),
-  ),
-  /** The page the search found, kept so a failed import of it can be retried. */
-  candidate: v.optional(candidate),
-});
-
 const point = v.object({ x: v.number(), y: v.number() });
 const colour = v.object({ red: v.number(), green: v.number(), blue: v.number() });
 
@@ -38,7 +28,6 @@ export const product = v.object({
   aspect: v.number(),
   original: v.optional(v.string()),
   photos: v.array(v.string()),
-  match: v.optional(match),
 });
 
 /** One appearance of a Product on a Canvas; `z` is a fractional stacking key. */

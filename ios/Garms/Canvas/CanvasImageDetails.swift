@@ -3,20 +3,13 @@ import SwiftUI
 struct CanvasImageDetails: View {
     let product: Product
     let library: ImportedAssetLibrary
-    let server: GarmsServer
     @Binding var status: String
     @Binding var title: String
     @Binding var category: String
     @Binding var price: Price?
     @Binding var notes: String
-    let onRemoveSticker: () -> Void
     let onDeleteProduct: () -> Void
-    let onBringToFront: () -> Void
-    let onPlaceAnother: () -> Void
     @State private var showingDeleteConfirmation = false
-    @State private var checkingConnection = false
-    @State private var connectionMessage: String?
-    @State private var connectionFailed = false
 
     var body: some View {
         NavigationStack {
@@ -73,30 +66,6 @@ struct CanvasImageDetails: View {
                             .autocorrectionDisabled(false)
                             .accessibilityLabel("Product notes")
                     }
-                    Section("Connection") {
-                        Button {
-                            checkingConnection = true
-                        } label: {
-                            HStack {
-                                Label("Test connection", systemImage: "network")
-                                Spacer()
-                                if checkingConnection { ProgressView() }
-                            }
-                        }
-                        .disabled(checkingConnection)
-                        if let connectionMessage {
-                            Label(connectionMessage, systemImage: connectionFailed ? "exclamationmark.circle" : "checkmark.circle")
-                                .font(.footnote)
-                                .foregroundStyle(connectionFailed ? Color.red : Color.secondary)
-                                .accessibilityIdentifier("connectionResult")
-                        }
-                    }
-                    Section {
-                        Button("Place another sticker", systemImage: "plus.square.on.square", action: onPlaceAnother)
-                        Button("Bring to front", systemImage: "square.3.layers.3d.top.filled", action: onBringToFront)
-                        Button("Remove from canvas", systemImage: "rectangle.portrait.slash", action: onRemoveSticker)
-                            .accessibilityHint("Keeps the product so you can find it in search")
-                    }
                     Section {
                         Button(role: .destructive) {
                             showingDeleteConfirmation = true
@@ -118,17 +87,6 @@ struct CanvasImageDetails: View {
                     Text("This deletes the product, every sticker of it and its photos. It can't be undone.")
                 }
             }
-        }
-        .task(id: checkingConnection) {
-            guard checkingConnection else { return }
-            connectionMessage = nil
-            connectionFailed = false
-            defer { checkingConnection = false }
-            let connected = await server.isConnected()
-            guard !Task.isCancelled else { return }
-            connectionFailed = !connected
-            connectionMessage = connected ? "Connected to Garms." : "Not connected to Garms. Check your internet connection."
-
         }
     }
 }

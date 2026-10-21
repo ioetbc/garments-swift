@@ -13,25 +13,10 @@ nonisolated struct Product: Codable, Equatable, Identifiable, Sendable {
     var originalAsset: String? = nil
     var galleryAssets: [String] = []
     var price: Price? = nil
-    /// Present exactly while this Product, imported from a Screenshot, is Awaiting match.
-    var match: Match? = nil
     // Field names on the wire, so the document's rows are also the change set's rows.
     enum CodingKeys: String, CodingKey {
         case id = "key", title, category, asset = "cutout", aspect, product_url = "sourceUrl", notes,
-             originalAsset = "original", galleryAssets = "photos", price, match
-    }
-    /// The search for the listing a Screenshot shows, and the page it found.
-    nonisolated struct Match: Codable, Equatable, Sendable {
-        enum Status: String, Codable, Sendable { case searching, found, notFound = "none", failed, loadFailed }
-        /// A web page that might be the listing.
-        struct Candidate: Codable, Equatable, Sendable {
-            var url: String
-            var title: String? = nil
-            var domain: String
-        }
-        var status: Status
-        /// Kept so a failed import of the found page can be retried.
-        var candidate: Candidate? = nil
+             originalAsset = "original", galleryAssets = "photos", price
     }
     var detailAssets: [String] {
         var seen: Set<String> = []

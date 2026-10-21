@@ -2,10 +2,8 @@ import Foundation
 
 /// GarmsServer for checks: every call is unexpected unless a check passes its own closure to the code under test.
 @MainActor final class FakeGarmsServer: GarmsServer {
-    func isConnected() async -> Bool { true }
     func importProduct(url: String) async throws -> GarmsAPI.ImportedProduct { throw URLError(.notConnectedToInternet) }
-    func sendImportLog(_ report: String) async throws {}
-    func findListing(_ jpeg: Data) async throws -> Product.Match.Candidate? { nil }
+    func findListing(_ jpeg: Data) async throws -> GarmsAPI.Listing? { nil }
 }
 
 /// In-memory CanvasSync: records what the session sends and delivers snapshots on demand.
@@ -15,23 +13,18 @@ import Foundation
     private(set) var viewports: [CanvasRemote.Viewport] = []
     private(set) var deletedProducts: [String] = []
     private(set) var uploads: [String: Data] = [:]
-    /// When set, saves stay in flight until `completeWrites()`.
-    var holdWrites = false
-    private var heldCompletions: [@MainActor (Error?) -> Void] = []
-    private var snapshot: (@MainActor (CanvasRemote) -> Void)?
     private var online: (@MainActor (Bool) -> Void)?
 
     init(remote: CanvasRemote) { self.remote = remote }
 
     func connect(snapshot: @escaping @MainActor (CanvasRemote) -> Void, online: @escaping @MainActor (Bool) -> Void) {
-        self.snapshot = snapshot
         self.online = online
         online(true)
         snapshot(remote)
     }
     func apply(_ changes: CanvasChangeSet, completion: @escaping @MainActor (Error?) -> Void) {
         applied.append(changes)
-        if holdWrites { heldCompletions.append(completion) } else { completion(nil) }
+        completion(nil)
     }
     func saveViewport(_ viewport: CanvasRemote.Viewport) { viewports.append(viewport) }
     func deleteProduct(_ id: String, completion: @escaping @MainActor (Error?) -> Void) {
@@ -42,18 +35,16 @@ import Foundation
         uploads[key] = data
         completion(nil)
     }
-    func completeWrites() {
-        holdWrites = false
-        let completions = heldCompletions
-        heldCompletions = []
-        for completion in completions { completion(nil) }
-    }
-    /// Delivers a snapshot as if another device had saved it.
-    func push(_ remote: CanvasRemote) {
-        self.remote = remote
-        snapshot?(remote)
-    }
     func setOnline(_ value: Bool) { online?(value) }
+}
+
+extension CanvasSession {
+    /// Moves a Sticker as one committed edit, like a finished drag.
+    func move(_ id: String, x: Double, y: Double) {
+        let before = document
+        document.placements[id]!.center = document.placements[id]!.center + WorldPoint(x: x, y: y)
+        complete(before)
+    }
 }
 
 extension CanvasFixtures {
