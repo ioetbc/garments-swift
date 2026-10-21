@@ -243,12 +243,12 @@ extension CanvasDocument {
         guard let recentIndex = namedGroups.firstIndex(where: \.isRecentUploads) else { return nil }
         let recent = namedGroups[recentIndex]
         let edge = CanvasConfiguration.initialImageEdge
-        let width = aspect >= 1 ? edge : edge * aspect
-        let height = aspect >= 1 ? edge / aspect : edge
+        var placement = StickerPlacement(productID: productID, center: WorldPoint(), width: edge, height: edge, z: topZ)
+        placement.fit(aspect: aspect)
         let bounds = recent.bounds(in: self)
         let center = recent.members.isEmpty || bounds.isNull ? recent.emptyCenter ?? fallback
-            : WorldPoint(x: bounds.maxX + CanvasConfiguration.magneticRestGap + width / 2, y: bounds.midY)
-        let placement = StickerPlacement(productID: productID, center: center, width: width, height: height, z: topZ)
+            : WorldPoint(x: bounds.maxX + CanvasConfiguration.magneticRestGap + placement.width / 2, y: bounds.midY)
+        placement.center = center
         placements[placement.id] = placement
         namedGroups[recentIndex].members.append(placement.id)
         namedGroups[recentIndex].emptyCenter = center

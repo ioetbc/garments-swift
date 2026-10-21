@@ -1,18 +1,15 @@
 import UIKit
 
-@MainActor private final class CanvasGlideTarget: NSObject {
-    weak var view: GarmsCanvasView?
-    @objc func tick(_ link: CADisplayLink) { view?.advanceGlide(link) }
-}
-
-@MainActor private final class CanvasTitleAnimationTarget: NSObject {
-    weak var view: GarmsCanvasView?
-    @objc func tick(_ link: CADisplayLink) { view?.advanceTitleAnimation(link) }
-}
-
-@MainActor private final class CanvasEdgeScrollTarget: NSObject {
-    weak var view: GarmsCanvasView?
-    @objc func tick(_ link: CADisplayLink) { view?.advanceEdgeScroll(link) }
+// CADisplayLink retains its target; the closure captures the view weakly.
+@MainActor private final class DisplayLinkProxy: NSObject {
+    let tick: (CADisplayLink) -> Void
+    init(tick: @escaping (CADisplayLink) -> Void) { self.tick = tick }
+    @objc func fire(_ link: CADisplayLink) { tick(link) }
+    static func link(_ tick: @escaping (CADisplayLink) -> Void) -> CADisplayLink {
+        let link = CADisplayLink(target: DisplayLinkProxy(tick: tick), selector: #selector(fire(_:)))
+        link.add(to: .main, forMode: .common)
+        return link
+    }
 }
 
 // Passive observer captures touch-down eligibility before UIKit's movement thresholds.
@@ -49,7 +46,6 @@ import UIKit
     private var firstPoint = CGPoint.zero
     private var multiTouch = false
     private var waitForLift = false
-    private var pinchActive = false
     private var manipulated = false
     private var onePan: UIPanGestureRecognizer!
     private var twoPan: UIPanGestureRecognizer!
@@ -104,7 +100,7 @@ import UIKit
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.touchObserver.touchesByID.isEmpty else { return }
                     if self.interaction.state != .idle { self.interaction.finish() }
-                    self.waitForLift = false; self.multiTouch = false; self.pinchActive = false
+                    self.waitForLift = false; self.multiTouch = false
                 }
             }
         }
@@ -197,10 +193,10 @@ import UIKit
     }
     @objc private func twoPanned(_ r:UIPanGestureRecognizer) {
         // The touch observer may set waitForLift before UIKit delivers .ended.
-        if r.state == .ended, !pinchActive, interaction.state == .cameraPan {
+        if r.state == .ended, interaction.state == .cameraPan {
             finishCameraPan(r); waitForLift = true; return
         }
-        guard !pinchActive, !waitForLift else { return }
+        guard interaction.state != .cameraPinch, !waitForLift else { return }
         switch r.state {
         case .began:
             guard r.numberOfTouches == 2 else { return }
@@ -216,15 +212,15 @@ import UIKit
     @objc private func pinched(_ r:UIPinchGestureRecognizer) {
         switch r.state {
         case .began:
-            guard !waitForLift, r.numberOfTouches == 2 else { return }; manipulated = true; pinchActive = true
+            guard !waitForLift, r.numberOfTouches == 2 else { return }; manipulated = true
             interaction.pinchStart(midpoint:r.location(in:self),recognizerScale:r.scale)
         case .changed:
             // On release UIKit can still report a change with only one touch.
             // Its location is no longer the pinch midpoint, so keep the last pose.
-            guard pinchActive, !waitForLift, r.numberOfTouches == 2 else { return }
+            guard interaction.state == .cameraPinch, !waitForLift, r.numberOfTouches == 2 else { return }
             interaction.pinch(midpoint:r.location(in:self),scale:r.scale)
-        case .ended: if pinchActive { interaction.finish(); pinchActive = false; waitForLift = true; scheduleSettle() }
-        case .cancelled,.failed: if pinchActive { interaction.cancel(); pinchActive = false; waitForLift = true }
+        case .ended: if interaction.state == .cameraPinch { interaction.finish(); waitForLift = true; scheduleSettle() }
+        case .cancelled,.failed: if interaction.state == .cameraPinch { interaction.cancel(); waitForLift = true }
         default: break
         }
     }
@@ -244,17 +240,14 @@ import UIKit
             previousTitleLiftedIDs = interaction.liftedIDs
             titleAnimationDeadline = CACurrentMediaTime() + 0.8
             if titleAnimationLink == nil, window != nil {
-                let target = CanvasTitleAnimationTarget(); target.view = self
-                let link = CADisplayLink(target: target, selector: #selector(CanvasTitleAnimationTarget.tick(_:)))
-                titleAnimationLink = link
-                link.add(to: .main, forMode: .common)
+                titleAnimationLink = DisplayLinkProxy.link { [weak self] in self?.advanceTitleAnimation($0) }
             }
         }
         overlay.liftedIDs = interaction.liftedIDs
         overlay.updateTitles()
         overlay.setNeedsDisplay(); updateAccessibility()
     }
-    fileprivate func advanceTitleAnimation(_ link: CADisplayLink) {
+    private func advanceTitleAnimation(_ link: CADisplayLink) {
         overlay.updateTitles()
         overlay.setNeedsDisplay()
         updateAccessibility()
@@ -273,12 +266,9 @@ import UIKit
         guard velocity.valid, hypot(velocity.x,velocity.y) > 40, window != nil else { return }
         glideVelocity = velocity
         glideTimestamp = CACurrentMediaTime()
-        let target = CanvasGlideTarget(); target.view = self
-        let link = CADisplayLink(target:target,selector:#selector(CanvasGlideTarget.tick(_:)))
-        glideLink = link
-        link.add(to:.main,forMode:.common)
+        glideLink = DisplayLinkProxy.link { [weak self] in self?.advanceGlide($0) }
     }
-    fileprivate func advanceGlide(_ link: CADisplayLink) {
+    private func advanceGlide(_ link: CADisplayLink) {
         guard interaction.state == .idle else { stopGlide(); return }
         let elapsed = link.timestamp-glideTimestamp
         guard elapsed > 0 else { return }
@@ -297,12 +287,9 @@ import UIKit
         stopEdgeScroll()
         guard window != nil else { return }
         edgeScrollTimestamp = CACurrentMediaTime()
-        let target = CanvasEdgeScrollTarget(); target.view = self
-        let link = CADisplayLink(target:target,selector:#selector(CanvasEdgeScrollTarget.tick(_:)))
-        edgeScrollLink = link
-        link.add(to:.main,forMode:.common)
+        edgeScrollLink = DisplayLinkProxy.link { [weak self] in self?.advanceEdgeScroll($0) }
     }
-    fileprivate func advanceEdgeScroll(_ link: CADisplayLink) {
+    private func advanceEdgeScroll(_ link: CADisplayLink) {
         guard interaction.isDragging, !multiTouch, !waitForLift,
               window != nil, holdRecognizer.numberOfTouches == 1,
               holdRecognizer.state == .began || holdRecognizer.state == .changed else {
@@ -323,7 +310,7 @@ import UIKit
         super.didMoveToWindow()
         if window == nil { cancelInteraction() }
     }
-    func cancelInteraction() { stopEdgeScroll(); stopGlide(); interaction.cancel(); pinchActive = false; waitForLift = !touchObserver.touchesByID.isEmpty }
+    func cancelInteraction() { stopEdgeScroll(); stopGlide(); interaction.cancel(); waitForLift = !touchObserver.touchesByID.isEmpty }
     private func updateAccessibility() {
         let ids = session.document.order.filter { renderer.layers[$0] != nil }
         for id in Array(elements.keys) where !ids.contains(id) { elements[id] = nil }

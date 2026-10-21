@@ -75,18 +75,17 @@ struct CanvasScreen: View {
             }
             .sheet(item: Binding(
                 get: { session.inspectedGroup },
-                set: { session.inspectedGroup = $0 }
+                set: { session.inspectedGroupID = $0?.id }
             ), onDismiss: {
                 session.history.endCoalescing()
                 groupPlacement = nil
             }) { group in
-                let _ = session.revision
                 CanvasGroupNameDrawer(
-                    group: session.document.namedGroups.first { $0.id == group.id } ?? group,
+                    group: group,
                     document: session.document,
                     library: session.importedAssets,
                     notes: Binding(
-                        get: { session.document.namedGroups.first { $0.id == group.id }?.notes ?? "" },
+                        get: { session.inspectedGroup?.notes ?? "" },
                         set: { session.updateGroupNotes(group.id, notes: $0) }
                     ),
                     onOpenItem: { placement in
@@ -138,7 +137,7 @@ struct CanvasScreen: View {
                     for (index, photo) in photos.enumerated() {
                         session.imports.importPhoto(title: "Imported photo \(index + 1)") {
                             guard let data = try await photo.loadTransferable(type: Data.self) else {
-                                throw ImportedImageDownload.ImageError.detail("This photo could not be loaded. Retry or select another image.")
+                                throw ImportedImageDownload.ImageError.unloadablePhoto
                             }
                             return data
                         }
@@ -179,9 +178,6 @@ struct CanvasScreen: View {
             ), onDeleteProduct: {
                 onDelete()
                 session.deleteProduct(product.id)
-                if let group = session.inspectedGroup {
-                    session.inspectedGroup = session.document.namedGroups.first { $0.id == group.id }
-                }
             })
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)

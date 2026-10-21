@@ -56,10 +56,13 @@ nonisolated enum CanvasGeometry {
                             dy:-item.height*(CanvasConfiguration.liftScale-1)/2)
             .offsetBy(dx:0,dy:-CanvasConfiguration.liftOffset/zoom)
     }
+    /// The shortest move that brings `a` edge to edge with `b`; zero on an axis where they overlap.
+    static func gap(_ a: CGRect, _ b: CGRect) -> WorldPoint {
+        WorldPoint(x: b.minX > a.maxX ? b.minX-a.maxX : (b.maxX < a.minX ? b.maxX-a.minX : 0),
+                   y: b.minY > a.maxY ? b.minY-a.maxY : (b.maxY < a.minY ? b.maxY-a.minY : 0))
+    }
     static func magneticOffset(_ moving: CGRect, toward target: CGRect, zoom: Double) -> WorldPoint {
-        let gap = WorldPoint(
-            x: target.minX > moving.maxX ? target.minX-moving.maxX : (target.maxX < moving.minX ? target.maxX-moving.minX : 0),
-            y: target.minY > moving.maxY ? target.minY-moving.maxY : (target.maxY < moving.minY ? target.maxY-moving.minY : 0))
+        let gap = gap(moving, target)
         let distance = hypot(gap.x,gap.y)
         let rest = min(CanvasConfiguration.magneticRestGap, 12/zoom)
         let reach = rest + CanvasConfiguration.magneticReach/zoom

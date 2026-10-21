@@ -1,3 +1,4 @@
+import type { WithoutSystemFields } from "convex/server";
 import { Context, Effect, Layer } from "effect";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ChangeSet, Group, Link, Product, Sticker, Viewport } from "../validators";
@@ -78,51 +79,40 @@ export class CanvasService extends Context.Service<CanvasService, {
     const apply = Effect.fn("CanvasService.apply")(function* (id: Id<"canvases">, c: ChangeSet) {
       const { user, canvas } = yield* owned(id);
       const foreign = new ForeignRows();
-      const onCanvas = (row: Doc<"stickers"> | Doc<"groups"> | null) => !row || row.canvas === canvas._id;
+      // Upserts `value` over the keyed row, or deletes the row when null. Fails on a row of another User or Canvas.
+      const write = Effect.fnUntraced(function* <T extends "products" | "stickers" | "groups">(
+        table: T, key: string, value: WithoutSystemFields<Doc<T>> | null,
+      ) {
+        const row: Doc<T> | null = yield* db.byKey(table, key);
+        const r = row as Doc<"products" | "stickers" | "groups"> | null;
+        if (r && ("owner" in r ? r.owner !== user._id : r.canvas !== canvas._id)) return yield* foreign;
+        if (value) yield* db.upsert(table, row, value);
+        else if (r) yield* db.remove(r);
+      });
 
       for (const product of c.products) {
         yield* validateProduct(product);
-        const row = yield* db.byKey("products", product.key);
-        if (row && row.owner !== user._id) return yield* foreign;
-        yield* db.upsert("products", row, { owner: user._id, ...product });
+        yield* write("products", product.key, { owner: user._id, ...product });
       }
       for (const sticker of c.stickers) {
         if (![sticker.x, sticker.y, sticker.width, sticker.height].every(Number.isFinite) || sticker.width <= 0 || sticker.height <= 0) {
           return yield* new InvalidInput({ message: "Invalid sticker geometry." });
         }
-        const row = yield* db.byKey("stickers", sticker.key);
-        if (!onCanvas(row)) return yield* foreign;
-        yield* db.upsert("stickers", row, { canvas: canvas._id, ...sticker });
+        yield* write("stickers", sticker.key, { canvas: canvas._id, ...sticker });
       }
-      for (const group of c.groups) {
-        const row = yield* db.byKey("groups", group.key);
-        if (!onCanvas(row)) return yield* foreign;
-        yield* db.upsert("groups", row, { canvas: canvas._id, ...group });
-      }
+      for (const group of c.groups) yield* write("groups", group.key, { canvas: canvas._id, ...group });
       for (const link of c.links) {
         if (!(yield* db.link(canvas._id, link))) yield* db.insert("detachedLinks", { canvas: canvas._id, ...link });
       }
       // Deletes are idempotent: a row the server never saw is already gone.
-      for (const key of c.deletedStickers) {
-        const row = yield* db.byKey("stickers", key);
-        if (!onCanvas(row)) return yield* foreign;
-        if (row) yield* db.remove(row);
-      }
-      for (const key of c.deletedGroups) {
-        const row = yield* db.byKey("groups", key);
-        if (!onCanvas(row)) return yield* foreign;
-        if (row) yield* db.remove(row);
-      }
+      for (const key of c.deletedStickers) yield* write("stickers", key, null);
+      for (const key of c.deletedGroups) yield* write("groups", key, null);
       for (const link of c.deletedLinks) {
         const row = yield* db.link(canvas._id, link);
         if (row) yield* db.remove(row);
       }
-      for (const key of c.deletedProducts) {
-        const row = yield* db.byKey("products", key);
-        if (row && row.owner !== user._id) return yield* foreign;
-        // Files stay: undo can bring the Product back. Only ProductService.remove deletes them.
-        if (row) yield* db.remove(row);
-      }
+      // Files stay: undo can bring the Product back. Only ProductService.remove deletes them.
+      for (const key of c.deletedProducts) yield* write("products", key, null);
 
       // References must resolve inside the caller's own rows once the set is applied.
       for (const sticker of c.stickers) {

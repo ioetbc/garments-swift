@@ -119,9 +119,7 @@ import CoreGraphics
         session.elasticLink = (item.id,target.id)
         let rest = min(CanvasConfiguration.detachRadius-1,
                        neighbours.map { CanvasGeometry.distance(pickup.bounds,$0.bounds) }.min() ?? 0)
-        let a = item.bounds, b = target.bounds
-        let gap = WorldPoint(x:b.minX > a.maxX ? b.minX-a.maxX : (b.maxX < a.minX ? b.maxX-a.minX : 0),
-                             y:b.minY > a.maxY ? b.minY-a.maxY : (b.maxY < a.minY ? b.maxY-a.minY : 0))
+        let gap = CanvasGeometry.gap(item.bounds,target.bounds)
         let distance = hypot(gap.x,gap.y)
         guard distance > rest else { return item }
         // An asymptotic rubber band: more pulling produces progressively less movement.
@@ -222,9 +220,7 @@ import CoreGraphics
             guard let preview, var item = snapshot.document.placements[preview.moving],
                   let target = snapshot.document.placements[preview.target] else { return }
             // Commit the preview as a real proximity group when the lifted image shrinks.
-            let a = item.bounds, b = target.bounds
-            let gap = WorldPoint(x:b.minX > a.maxX ? b.minX-a.maxX : (b.maxX < a.minX ? b.maxX-a.minX : 0),
-                                 y:b.minY > a.maxY ? b.minY-a.maxY : (b.maxY < a.minY ? b.maxY-a.minY : 0))
+            let gap = CanvasGeometry.gap(item.bounds,target.bounds)
             let distance = hypot(gap.x,gap.y)
             let existing = original.document.committedGroups.contains { $0.contains(item.id) && $0.contains(target.id) }
             if !existing && distance > CanvasConfiguration.joinRadius {

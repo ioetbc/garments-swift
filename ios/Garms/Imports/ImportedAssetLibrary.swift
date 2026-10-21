@@ -56,13 +56,13 @@ nonisolated enum ImportedImageDownload {
         let session = URLSession(configuration: configuration, delegate: HTTPSImageRedirects(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (bytes, response) = try await session.bytes(from: url)
-        guard let response = response as? HTTPURLResponse else { throw ImageError.detail("Image download returned a non-HTTP response.") }
-        guard response.statusCode == 200 else { throw ImageError.detail("Image download failed: HTTP \(response.statusCode).") }
-        guard response.mimeType?.hasPrefix("image/") == true else { throw ImageError.detail("Image download rejected Content-Type: \(response.mimeType ?? "missing").") }
-        guard response.expectedContentLength <= 10 * 1024 * 1024 else { throw ImageError.detail("Image Content-Length exceeds the 10 MB limit: \(response.expectedContentLength) bytes.") }
+        guard let response = response as? HTTPURLResponse else { throw ImageError.notHTTP }
+        guard response.statusCode == 200 else { throw ImageError.status(response.statusCode) }
+        guard response.mimeType?.hasPrefix("image/") == true else { throw ImageError.notImage(response.mimeType) }
+        guard response.expectedContentLength <= 10 * 1024 * 1024 else { throw ImageError.tooLarge }
         var data = Data()
         for try await byte in bytes {
-            if data.count >= 10 * 1024 * 1024 { throw ImageError.detail("Downloaded image exceeds the 10 MB limit.") }
+            if data.count >= 10 * 1024 * 1024 { throw ImageError.tooLarge }
             data.append(byte)
         }
         try Task.checkCancellation()
@@ -76,18 +76,18 @@ nonisolated enum ImportedImageDownload {
                   let width = props[kCGImagePropertyPixelWidth] as? Double,
                   let height = props[kCGImagePropertyPixelHeight] as? Double,
                   width > 0, height > 0, width <= 20000, height <= 20000, width * height <= 80_000_000,
-                  let image = CanvasImageWorker.decode(data: data, tier: 2048) else { throw ImageError.detail("Image decoding failed or dimensions exceed 20,000 pixels / 80 megapixels.") }
+                  let image = CanvasImageWorker.decode(data: data, tier: 2048) else { throw ImageError.undecodable }
             let output = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw ImageError.detail("Could not encode the image as PNG.") }
+            guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else { throw ImageError.encoding }
             CGImageDestinationAddImage(destination, image, nil)
-            guard CGImageDestinationFinalize(destination) else { throw ImageError.detail("Could not encode the image as PNG.") }
+            guard CGImageDestinationFinalize(destination) else { throw ImageError.encoding }
             return Artwork(data: output as Data, aspect: Double(image.width) / Double(image.height))
         }.value
     }
     /// The image flattened onto white as a JPEG bounded to 1,024 pixels, as sent to search.
     static func flattenedJPEG(_ artwork: Artwork) async throws -> Data {
         try await Task.detached {
-            let failed = ImageError.detail("The Screenshot could not be prepared for searching.")
+            let failed = ImageError.searchPreparation
             guard let image = CanvasImageWorker.decode(data: artwork.data, tier: 1024),
                   let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
                                           space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { throw failed }
@@ -103,11 +103,19 @@ nonisolated enum ImportedImageDownload {
         }.value
     }
     enum ImageError: LocalizedError {
-        case invalid, detail(String)
+        case invalid, notHTTP, status(Int), notImage(String?), tooLarge, undecodable, encoding, searchPreparation, unloadablePhoto, noListingImage
         var errorDescription: String? {
             switch self {
             case .invalid: "The image could not be installed. The saved link is still available."
-            case .detail(let message): message
+            case .notHTTP: "Image download returned a non-HTTP response."
+            case .status(let code): "Image download failed: HTTP \(code)."
+            case .notImage(let type): "Image download rejected Content-Type: \(type ?? "missing")."
+            case .tooLarge: "Downloaded image exceeds the 10 MB limit."
+            case .undecodable: "Image decoding failed or dimensions exceed 20,000 pixels / 80 megapixels."
+            case .encoding: "Could not encode the image as PNG."
+            case .searchPreparation: "The Screenshot could not be prepared for searching."
+            case .unloadablePhoto: "This photo could not be loaded. Retry or select another image."
+            case .noListingImage: "The page returned no usable HTTPS product image URL. Cannot download product artwork."
             }
         }
     }

@@ -31,7 +31,11 @@ import Observation
     var revision = 0
     var selection: String?
     var inspectedPlacement: StickerPlacement?
-    var inspectedGroup: CanvasNamedGroup?
+    var inspectedGroupID: String?
+    var inspectedGroup: CanvasNamedGroup? {
+        _ = revision // `document` is unobserved; `revision` makes readers refresh when it changes.
+        return inspectedGroupID.flatMap { id in document.namedGroups.first { $0.id == id } }
+    }
     var error: String?
 
     func opacity(for placement: StickerPlacement) -> Float {
@@ -96,7 +100,6 @@ import Observation
             load(CanvasSnapshot(document: incoming, detachedLinks: remote.detachedLinks))
             elasticLink = nil
             groupingPreview = nil
-            if let group = inspectedGroup { inspectedGroup = document.namedGroups.first { $0.id == group.id } }
         }
         refresh()
         imports.start()
@@ -132,7 +135,7 @@ import Observation
     func inspectGroup(_ id: String) {
         resolveInteraction?()
         inspectedPlacement = nil
-        inspectedGroup = document.namedGroups.first { $0.id == id }
+        inspectedGroupID = id
     }
     func updateGroup(_ id: String, name: String, backgroundColour: CanvasGroupColour?) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -267,7 +270,7 @@ import Observation
         elasticLink = nil
         groupingPreview = nil
         inspectedPlacement = nil
-        inspectedGroup = nil
+        inspectedGroupID = nil
         // Undo and redo sync like any other edit.
         edit(history: .none) { $0 = state }
     }

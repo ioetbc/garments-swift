@@ -215,7 +215,7 @@ import OSLog
             let result = try await fetch(item.record.url)
             try Task.checkCancellation()
             log(id, "Metadata received. Title: \(result.title ?? "missing"). Image candidate: \(result.imageURLs.isEmpty ? "missing" : "present").")
-            guard let address = result.imageURLs.first else { throw ImportedImageDownload.ImageError.detail("The page returned no usable HTTPS product image URL. Cannot download product artwork.") }
+            guard let address = result.imageURLs.first else { throw ImportedImageDownload.ImageError.noListingImage }
             var seenImages: Set<String> = [address]
             update(id) { $0.pendingImages = result.imageURLs.filter { seenImages.insert($0).inserted } }
             stage(id, .downloading)

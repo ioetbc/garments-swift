@@ -58,9 +58,7 @@ struct CanvasSnapshot: Equatable {
                 for (placementID, placement) in snapshot.document.placements where placement.productID == id {
                     guard let old = before.placements[placementID], let new = after.placements[placementID],
                           old.width != new.width || old.height != new.height else { continue }
-                    let edge = max(placement.width, placement.height)
-                    snapshot.document.placements[placementID]?.width = product.aspect >= 1 ? edge : edge * product.aspect
-                    snapshot.document.placements[placementID]?.height = product.aspect >= 1 ? edge / product.aspect : edge
+                    snapshot.document.placements[placementID]?.fit(aspect: product.aspect)
                 }
             }
         }
