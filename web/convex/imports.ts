@@ -4,11 +4,8 @@ import { ConvexError, v } from "convex/values";
 import { action, type ActionCtx } from "./_generated/server";
 import { createDiagnosticsHandler } from "../lib/import-diagnostics";
 import { createImportHandler } from "../lib/import-product";
-import { createScrapeHandler } from "../lib/scrape";
 
 const importHandler = createImportHandler();
-// The disk cache needs a persistent filesystem, which Convex actions don't have.
-const scrapeHandler = createScrapeHandler(undefined, undefined, null);
 const logHandler = createDiagnosticsHandler();
 const nullable = <T extends Parameters<typeof v.union>[0]>(value: T) => v.union(value, v.null());
 
@@ -29,16 +26,6 @@ export const product = action({
     price: nullable(v.object({ amount: v.number(), currency: v.string() })), diagnostics: v.array(v.string()),
   }),
   handler: (ctx, args) => call(ctx, importHandler, JSON.stringify(args)),
-});
-
-/** A page's Markdown and its availability classification. */
-export const scrape = action({
-  args: { url: v.string() },
-  returns: v.object({
-    url: v.string(), markdown: v.string(), title: nullable(v.string()), statusCode: nullable(v.number()),
-    classification: v.object({ status: v.string(), error: nullable(v.string()), model: v.string() }), updatedAt: v.string(),
-  }),
-  handler: (ctx, args) => call(ctx, scrapeHandler, JSON.stringify(args)),
 });
 
 /** Writes a phone's import processing log to the deployment's logs. */

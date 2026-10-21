@@ -13,13 +13,12 @@ nonisolated struct Product: Codable, Equatable, Identifiable, Sendable {
     var originalAsset: String? = nil
     var galleryAssets: [String] = []
     var price: Price? = nil
-    var availability: Availability? = nil
     /// Present exactly while this Product, imported from a Screenshot, is Awaiting match.
     var match: Match? = nil
     // Field names on the wire, so the document's rows are also the change set's rows.
     enum CodingKeys: String, CodingKey {
         case id = "key", title, category, asset = "cutout", aspect, product_url = "sourceUrl", notes,
-             originalAsset = "original", galleryAssets = "photos", price, availability, match
+             originalAsset = "original", galleryAssets = "photos", price, match
     }
     /// The search for the listing a Screenshot shows, and the page it found.
     nonisolated struct Match: Codable, Equatable, Sendable {
@@ -72,24 +71,6 @@ nonisolated struct Price: Codable, Equatable, Sendable {
     }
     var major: Decimal { Decimal(amount) / pow(10, Self.digits(currency)) }
     var formatted: String { major.formatted(.currency(code: currency)) }
-}
-
-/// Whether the listing can still be bought, as last checked.
-nonisolated struct Availability: Codable, Equatable, Sendable {
-    enum State: String, Codable, Sendable { case available, sold, removed, out_of_stock, unknown }
-    var state: State
-    /// Milliseconds since 1970, as Convex stores times.
-    var checkedAt: Double
-    var isUnavailable: Bool { [.sold, .removed, .out_of_stock].contains(state) }
-    var label: String {
-        switch state {
-        case .available: "Available"
-        case .sold: "Sold"
-        case .removed: "Removed"
-        case .out_of_stock: "Out of stock"
-        case .unknown: "Unknown"
-        }
-    }
 }
 
 nonisolated enum CanvasSearch {

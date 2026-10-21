@@ -37,56 +37,10 @@ import Observation
     var revealedMatch: String?
     var error: String?
 
-    /// Records a successful check on the Product. Failed checks keep the last known Availability.
-    func recordAvailability(_ classification: GarmsAPI.ProductClassification, productID: String) {
-        guard classification.error == nil, isOnline, document.products[productID] != nil else { return }
-        let before = snapshot()
-        let availability = Availability(state: .init(rawValue: classification.status) ?? .unknown,
-                                        checkedAt: Date().timeIntervalSince1970 * 1000)
-        document.products[productID]?.availability = availability
-        // A fact about the listing, not an edit: carry it into history without touching anything undoable.
-        history.patchProduct(productID) { $0.availability = availability }
-        revision &+= 1
-        render?()
-        save(from: before.document, before.detachedLinks)
-    }
-
     func opacity(for placement: StickerPlacement) -> Float {
-        if dimmedPlacementIDs.contains(placement.id) { return 0.1 }
-        return document.products[placement.productID]?.availability?.isUnavailable == true ? 0.35 : 1
+        dimmedPlacementIDs.contains(placement.id) ? 0.1 : 1
     }
 
-    // ponytail: launch-time checks until a server cron owns Availability; skips anything checked in the last day.
-    func loadAvailability(
-        now: Date = Date(),
-        fetch: (@MainActor @Sendable (String) async throws -> GarmsAPI.ProductClassification?)? = nil
-    ) async {
-        let fetch = fetch ?? { [server] in try await server.scrapePage(url: $0).classification }
-        let productIDs = Set(document.placements.values.map(\.productID))
-        let stale = now.timeIntervalSince1970 * 1000 - 24 * 60 * 60 * 1000
-        let products = productIDs.compactMap { document.products[$0] }
-            .filter { !$0.product_url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .filter { ($0.availability?.checkedAt ?? 0) < stale }
-            .sorted { $0.id < $1.id }
-        // Bound startup requests while updating the canvas as each result arrives.
-        await withTaskGroup(of: (String, GarmsAPI.ProductClassification?).self) { group in
-            var remaining = products.makeIterator()
-            func enqueue(_ product: Product) {
-                group.addTask {
-                    guard !Task.isCancelled else { return (product.id, nil) }
-                    return (product.id, try? await fetch(product.product_url))
-                }
-            }
-            for _ in 0..<3 {
-                if let product = remaining.next() { enqueue(product) }
-            }
-            for await (productID, classification) in group {
-                guard !Task.isCancelled else { group.cancelAll(); break }
-                if let classification { recordAvailability(classification, productID: productID) }
-                if let next = remaining.next() { enqueue(next) }
-            }
-        }
-    }
     var searchQuery = "" {
         didSet {
             guard searchQuery != oldValue else { return }

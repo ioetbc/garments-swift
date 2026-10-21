@@ -6,15 +6,6 @@ export const viewport = v.object({ x: v.number(), y: v.number(), zoom: v.number(
 /** Amount in integer minor units with an ISO 4217 currency. */
 export const price = v.object({ amount: v.number(), currency: v.string() });
 
-/** Whether a Product can still be bought, as last checked. */
-export const availability = v.object({
-  state: v.union(
-    v.literal("available"), v.literal("sold"), v.literal("removed"),
-    v.literal("out_of_stock"), v.literal("unknown"),
-  ),
-  checkedAt: v.number(),
-});
-
 /** A web page that might be the listing a Screenshot shows. */
 export const candidate = v.object({
   url: v.string(),
@@ -47,7 +38,6 @@ export const product = v.object({
   aspect: v.number(),
   original: v.optional(v.string()),
   photos: v.array(v.string()),
-  availability: v.optional(availability),
   match: v.optional(match),
 });
 

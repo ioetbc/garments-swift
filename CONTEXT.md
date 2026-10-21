@@ -40,10 +40,6 @@ _Avoid_: Type, kind
 An optional amount in a currency recorded on a Product, a snapshot rather than the listing's live price. Prices in different currencies are never added together.
 _Avoid_: Cost, listing price
 
-**Availability**:
-Whether a Product can still be bought from its source link, as last checked: available, sold, removed, out of stock, or unknown, plus when it was checked.
-_Avoid_: Status, stock
-
 **Screenshot**:
 An image imported from Photos that the system marks as a screen capture, assumed to show a shop's listing in an app or website. Only Screenshots are searched for Candidate matches; other photos import without a link.
 _Avoid_: Screen grab, capture

@@ -4,7 +4,6 @@ import Foundation
 @MainActor final class FakeGarmsServer: GarmsServer {
     func isConnected() async -> Bool { true }
     func importProduct(url: String) async throws -> GarmsAPI.ImportedProduct { throw URLError(.notConnectedToInternet) }
-    func scrapePage(url: String) async throws -> GarmsAPI.ScrapedPage { throw URLError(.notConnectedToInternet) }
     func sendImportLog(_ report: String) async throws {}
     func findListing(_ jpeg: Data) async throws -> Product.Match.Candidate? { nil }
 }

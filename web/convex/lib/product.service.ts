@@ -14,7 +14,6 @@ export const validateProduct = Effect.fnUntraced(function* (p: Product) {
     return yield* new InvalidInput({ message: "Price must be a non-negative whole number of minor units with an ISO 4217 currency." });
   }
   if (!Number.isFinite(p.aspect) || p.aspect <= 0) return yield* new InvalidInput({ message: "Invalid aspect ratio." });
-  if (p.availability && !Number.isFinite(p.availability.checkedAt)) return yield* new InvalidInput({ message: "Invalid availability time." });
 });
 
 /** Product rules that span its Stickers and files. */

@@ -40,7 +40,7 @@ bun run dev --hostname 0.0.0.0 --port 3000
 
 `GET /api/health` returns `{"status":"ok","message":"Connected to Garms."}` with caching disabled. It is a public connectivity check and returns no user data or credentials.
 
-Imports, availability checks and "Send log" run as Convex actions (`web/convex/imports.ts`) for the signed-in User, so the app needs no API server or tunnel. Set `FIRECRAWL_API_KEY` and `AI_GATEWAY_API_KEY` on each Convex deployment (`npx convex env set`). **Test connection** in a product's details drawer reports whether the app is connected to Convex; sent logs appear in the Convex dashboard logs.
+Imports and "Send log" run as Convex actions (`web/convex/imports.ts`) for the signed-in User, so the app needs no API server or tunnel. Set `FIRECRAWL_API_KEY` and `AI_GATEWAY_API_KEY` on each Convex deployment (`npx convex env set`). **Test connection** in a product's details drawer reports whether the app is connected to Convex; sent logs appear in the Convex dashboard logs.
 
 Server-only credentials belong in `web/.env.local` locally and the hosting provider's environment settings when deployed. Configure the website deployment's root directory as `web`. The prototype shared-link endpoint is described below.
 
@@ -57,7 +57,7 @@ as a native application, and activate the Convex integration.
 cd web
 npx convex env set CLERK_FRONTEND_API_URL https://<instance>.clerk.accounts.dev  # the paired Clerk instance
 npx convex env set CLERK_SECRET_KEY sk_test_…  # lets deleting a User remove their Clerk user
-npx convex env set AI_GATEWAY_API_KEY …  # reads the shop and title off a Screenshot (also used by availability checks)
+npx convex env set AI_GATEWAY_API_KEY …  # reads the shop and title off a Screenshot
 npx convex dev                         # local or dev deployment; regenerates convex/_generated
 npx vitest run                         # backend tests (convex-test, in memory)
 bun seed/seed-canvas.ts "<tokenIdentifier>"  # optional: fill your User with the sample Products
@@ -82,18 +82,10 @@ gesture ends; offline, the last loaded Canvas stays viewable and editing is disa
 - [Historical canvas implementation plan](docs/CANVAS_IMPLEMENTATION_PLAN.md)
 - [Live-link proposal](docs/LIVE_LINK_PLAN.md) — initial proposal; subsequent discussion favors evaluating Jev as the primary classifier in a Next.js backend.
 
-## Canvas availability
+## Notes
 
 Product and group drawers include a multiline **Notes** field. Edits save as you
 type, support undo/redo, and are stored with the Product or Group in Convex.
-
-When the canvas loads, the app checks each placed product not checked in the last
-24 hours through `/api/scrape`, with at most three requests in flight, and saves the
-result and its time on the Product. Products that are `sold`, `removed` or `out_of_stock`
-fade to 35% opacity and remain selectable. Unknown results and connection
-failures do not mark products unavailable. Search dimming still takes precedence.
-The drawer shows the loaded availability, and manual checks update that product’s canvas
-availability, even when other products share its URL. VoiceOver reads the availability status too.
 
 ## Photo imports (prototype)
 
@@ -106,7 +98,7 @@ failures retain the original and support **Retry background removal**. Processin
 pauses while the app is inactive and resumes when it returns.
 
 Photo imports use the system photo picker, need no API server, and have no listing
-URL or availability check. Photos that the library marks as **Screenshots** (Garms asks for photo
+URL. Photos that the library marks as **Screenshots** (Garms asks for photo
 library access to tell) are the exception: once the Sticker is on the Canvas, the whole
 Screenshot, flattened onto white, is sent to the `matches:search` Convex action. A vision
 model behind the AI Gateway reads the shop, its website and the product title off it, then
@@ -171,7 +163,7 @@ social image is available, the gallery contains that single image.
 For SSENSE, the importer uses rendered images matching the current product SKU,
 orders them by photo number, and excludes the unexpanded `__IMAGE_PARAMS__` URL
 in its structured data. Different sizes of the same photo appear only once.
-It does not run availability classification or use the availability cache. Use
+Use
 the physical-device API address instructions above; the extension needs no API
 configuration. Imported prices are unknown, and group totals identify known-price
 subtotals when needed.
@@ -186,7 +178,7 @@ Validation on 26 September 2026:
 - Unsigned iOS build compiled and embedded `GarmsShare.appex`.
 - All 15 backend tests, TypeScript, lint, and the webpack production build passed.
   The default Turbopack build was blocked by the environment's worker-port restriction.
-- Shared URL/inbox, import session, availability, initial layout and search checks
+- Shared URL/inbox, import session, initial layout and search checks
   passed. `MagneticDragChecks.swift:86` fails “Cancellation must restore the document”
   on both the current tree and unmodified HEAD sources; this existing failure remains.
 - Live Firecrawl extraction of the fixture Vinted UK listing returned “Next top | Vinted”
@@ -210,7 +202,6 @@ Run UIKit/session and existing canvas checks on an Apple Silicon Mac with Xcode
 ```sh
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/ImportSessionChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/ForegroundCutoutChecks.swift
-zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/AvailabilityChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/InitialLayoutChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/SearchChecks.swift
 zsh ios/tools/checks/run-canvas-check.sh ios/tools/checks/MagneticDragChecks.swift

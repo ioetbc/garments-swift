@@ -13,7 +13,6 @@
     "typecheck": "tsc -p convex --noEmit"
   },
   "dependencies": {
-    "ai": "^7.0.114",
     "cheerio": "^1.2.0",
     "convex": "^1.46.0",
     "effect": "^4.0.2",

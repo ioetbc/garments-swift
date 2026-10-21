@@ -156,15 +156,13 @@ describe("change sets", () => {
     expect((await t.withIdentity(bob).query(api.canvases.load, { canvas: bobCanvas })).stickers.map((s) => s.key)).toEqual(["bob-sticker"]);
   });
 
-  test("Price and Availability validators reject malformed values", async () => {
+  test("Price validators reject malformed values", async () => {
     const t = convexTest(schema, modules).withIdentity(alice);
     const canvas = await t.mutation(api.canvases.start, {});
     const malformed: Record<string, unknown>[] = [
       { price: { amount: 12.5, currency: "GBP" } },
       { price: { amount: -1, currency: "GBP" } },
       { price: { amount: 100, currency: "pounds" } },
-      { availability: { state: "gone", checkedAt: 0 } },
-      { availability: { state: "sold" } },
     ];
     for (const fields of malformed) {
       await expect(t.mutation(api.canvases.apply, { canvas, changes: { ...emptyChanges(), products: [{ ...product("p"), ...fields } as never] } }))

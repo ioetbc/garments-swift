@@ -214,9 +214,6 @@ struct CanvasScreen: View {
                 session.imports.setActive(v == .active)
             }
             .task { session.imports.setActive(phase == .active) }
-            .task(id: session.hasLoaded && session.isOnline) {
-                if session.hasLoaded && session.isOnline { await session.loadAvailability() }
-            }
     }
 
     private var unplacedMatches: [Product] {
@@ -285,8 +282,6 @@ struct CanvasScreen: View {
             }, onPlaceAnother: {
                 onDelete()
                 session.placeSticker(of: product.id)
-            }, onAvailability: {
-                session.recordAvailability($0, productID: product.id)
             })
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)

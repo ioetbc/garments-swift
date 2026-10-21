@@ -21,15 +21,6 @@ struct CanvasSnapshot: Equatable {
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
     func clear() { undoStack.removeAll(); redoStack.removeAll() }
-    /// Applies a non-undoable change to a Product wherever history holds it.
-    func patchProduct(_ id: String, _ change: (inout Product) -> Void) {
-        func patch(_ snapshot: inout CanvasSnapshot) {
-            if snapshot.document.products[id] != nil { change(&snapshot.document.products[id]!) }
-        }
-        for index in undoStack.indices { patch(&undoStack[index].before); patch(&undoStack[index].after) }
-        for index in redoStack.indices { patch(&redoStack[index].before); patch(&redoStack[index].after) }
-    }
-
     func record(before: CanvasSnapshot, after: CanvasSnapshot, key: String? = nil) {
         guard before != after else { return }
         if let key, redoStack.isEmpty, undoStack.last?.key == key {

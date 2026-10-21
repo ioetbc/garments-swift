@@ -13,12 +13,7 @@ struct CanvasImageDetails: View {
     let onDeleteProduct: () -> Void
     let onBringToFront: () -> Void
     let onPlaceAnother: () -> Void
-    let onAvailability: (GarmsAPI.ProductClassification) -> Void
     @State private var showingDeleteConfirmation = false
-    @State private var scrapingPage = false
-    @State private var scrapedPage: GarmsAPI.ScrapedPage?
-    @State private var scrapeError: String?
-    @State private var showingMarkdown = false
     @State private var checkingConnection = false
     @State private var connectionMessage: String?
     @State private var connectionFailed = false
@@ -78,51 +73,6 @@ struct CanvasImageDetails: View {
                             .autocorrectionDisabled(false)
                             .accessibilityLabel("Product notes")
                     }
-                    if !product.product_url.isEmpty {
-                        Section("Listing availability") {
-                            Button {
-                                scrapingPage = true
-                            } label: {
-                                HStack {
-                                    Label(scrapingPage ? "Checking availability…" : "Check availability", systemImage: "arrow.clockwise")
-                                    Spacer()
-                                    if scrapingPage { ProgressView() }
-                                }
-                            }
-                            .disabled(scrapingPage || product.product_url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            if let scrapeError {
-                                Text(scrapeError)
-                                    .font(.footnote)
-                                    .foregroundStyle(.red)
-                            }
-                            if let availability = product.availability {
-                                LabeledContent("Availability", value: availability.label)
-                                    .accessibilityIdentifier("productAvailability")
-                                Text("Checked \(Date(timeIntervalSince1970: availability.checkedAt / 1000).formatted(.relative(presentation: .named)))")
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let classification = scrapedPage?.classification {
-                                if let message = classification.error {
-                                    Text(message)
-                                        .font(.footnote)
-                                        .foregroundStyle(.orange)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                            if let scrapedPage {
-                                Button("View Markdown") { showingMarkdown = true }
-                                Text(scrapedPage.url)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if let code = scrapedPage.statusCode, code >= 400 {
-                                    Text("The source page returned HTTP \(code).")
-                                        .font(.footnote)
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-                        }
-                    }
                     Section("Connection") {
                         Button {
                             checkingConnection = true
@@ -167,44 +117,6 @@ struct CanvasImageDetails: View {
                 } message: {
                     Text("This deletes the product, every sticker of it and its photos. It can't be undone.")
                 }
-            }
-        }
-        .sheet(isPresented: $showingMarkdown) {
-            NavigationStack {
-                ScrollView {
-                    Text(verbatim: scrapedPage?.markdown ?? "")
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                }
-                .navigationTitle("Markdown")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") { showingMarkdown = false }
-                    }
-                    if let scrapedPage {
-                        ToolbarItem(placement: .primaryAction) {
-                            ShareLink(item: scrapedPage.markdown)
-                        }
-                    }
-                }
-            }
-        }
-        .task(id: scrapingPage) {
-            guard scrapingPage else { return }
-            scrapedPage = nil
-            scrapeError = nil
-            defer { scrapingPage = false }
-            do {
-                let page = try await server.scrapePage(url: product.product_url)
-                try Task.checkCancellation()
-                scrapedPage = page
-                if let classification = page.classification { onAvailability(classification) }
-            } catch {
-                guard !Task.isCancelled else { return }
-                scrapeError = error.localizedDescription
             }
         }
         .task(id: checkingConnection) {

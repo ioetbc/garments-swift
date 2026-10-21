@@ -334,7 +334,6 @@ import UIKit
             guard let p = session.document.placements[id], let product = session.document.products[p.productID] else { continue }
             let element = elements[id] ?? UIAccessibilityElement(accessibilityContainer:self)
             element.accessibilityLabel = [product.title, product.category].compactMap { $0 }.joined(separator: ", ")
-            element.accessibilityValue = product.availability?.label
             element.accessibilityTraits = .button
             element.accessibilityFrameInContainerSpace = overlay.screenRect(p.bounds,session)
             func action(_ title:String,_ body:@escaping (CanvasSession)->Void) -> UIAccessibilityCustomAction {
