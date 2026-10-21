@@ -1,8 +1,47 @@
 import { Firecrawl, type Document, SdkError } from "firecrawl";
+import { Context, Effect, Layer } from "effect";
 import { isIP } from "node:net";
-import { randomUUID } from "node:crypto";
 import { load } from "cheerio";
+import type { ImportedProduct } from "../validators";
+import { ImportFailed, InvalidInput } from "./errors";
 
+/** Fetches a page as markdown, raw HTML and metadata. */
+export type Scrape = (url: string) => Promise<Document>;
+
+const firecrawl: Scrape = (url) =>
+  new Firecrawl({ apiKey: process.env.FIRECRAWL_API_KEY, timeoutMs: 50_000, maxRetries: 1 })
+    .scrape(url, { formats: ["markdown", "rawHtml"], onlyMainContent: true, maxAge: 0, timeout: 45_000, autoResume: false });
+
+/** A product page scraped through Firecrawl. One scrape per import. */
+export class ProductPageReader extends Context.Service<ProductPageReader, {
+  /** A public product page's title, Price and images. */
+  read(url: string): Effect.Effect<ImportedProduct, InvalidInput | ImportFailed>;
+}>()("garms/ProductPageReader") {
+  /** Reads pages fetched by `scrape`. */
+  static readonly make = (scrape: Scrape) => ProductPageReader.of({
+    read: Effect.fn("ProductPageReader.read")(function* (submitted: string) {
+      const url = submitted.trim();
+      if (!isPublic(url)) return yield* new InvalidInput({ message: "Provide a public HTTP(S) URL without credentials." });
+      // One line per step, so a bad import can be traced in the deployment's logs.
+      const log = (step: string, details: object) => Effect.sync(() => console.info(`Product import: ${step}`, JSON.stringify(details)));
+      const started = Date.now();
+      const page = yield* Effect.tryPromise({
+        try: () => scrape(url),
+        catch: (cause) => new ImportFailed({ reason: cause instanceof SdkError && cause.status === 429 ? "busy" : "failed", cause }),
+      }).pipe(Effect.tapError((error) => Effect.sync(() => console.error("Product import: Firecrawl failed", error.cause))));
+      const status = page.metadata?.statusCode;
+      yield* log("scraped", { host: new URL(url).hostname, status, markdown: page.markdown?.length ?? 0, ms: Date.now() - started });
+      if ((status ?? 200) >= 400) return yield* new ImportFailed({ reason: "unreachable", cause: status });
+      const { product, imageSource } = extractProduct(url, page);
+      yield* log("extracted", { title: product.title !== null, imageSource: imageSource ?? null, gallery: product.imageURLs.length });
+      return product;
+    }),
+  });
+
+  static readonly layer = Layer.sync(ProductPageReader, () => ProductPageReader.make(firecrawl));
+}
+
+/** The URL, if it is a public HTTP(S) address without credentials; throws otherwise. */
 export function publicURL(value: string): URL {
   if (value.length > 4096) throw new Error("URL too long");
   const url = new URL(value);
@@ -199,79 +238,19 @@ function listingPrice(document: Document): { amount: number; currency: string } 
   return price;
 }
 
-function extractImport(url: string, document: Document) {
+const isPublic = (url: string) => {
+  try { publicURL(url); return true; } catch { return false; }
+};
+
+/** The product, and where its main image came from, read off a scraped page. */
+export function extractProduct(url: string, document: Document): { product: ImportedProduct; imageSource: string | undefined } {
   const metadata = document.metadata;
   const title = [metadata?.ogTitle, metadata?.title].find(v => typeof v === "string" && v.trim());
   const image = selectImportImage(url, document);
   const imageURLs = productGallery(url, document, image?.url);
   const price = listingPrice(document);
-  return { product: { url, title: title?.trim().slice(0, 500) ?? null, imageURL: imageURLs[0] ?? null, imageURLs, price }, imageSource: imageURLs[0] === image?.url ? image?.source : (imageURLs.length ? "product gallery" : undefined) };
-}
-
-export function normalizeImport(url: string, document: Document) {
-  return extractImport(url, document).product;
-}
-
-async function scrape(url: string): Promise<Document> {
-  return new Firecrawl({ apiKey: process.env.FIRECRAWL_API_KEY, timeoutMs: 50_000, maxRetries: 1 })
-    .scrape(url, { formats: ["markdown", "rawHtml"], onlyMainContent: true, maxAge: 0, timeout: 45_000, autoResume: false });
-}
-const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
-export function createImportHandler(fetchPage: typeof scrape = scrape) {
-  return async (request: Request) => {
-    if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json") return json({ error: "Content-Type must be application/json." }, 415);
-    let submitted: string;
-    try {
-      const reader = request.body?.getReader();
-      if (!reader) throw new Error();
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > 8192) { await reader.cancel(); return json({ error: "Request body exceeds 8 KB." }, 413); }
-        chunks.push(value);
-      }
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      if (typeof body?.url !== "string") throw new Error();
-      submitted = body.url.trim();
-      publicURL(submitted);
-    } catch { return json({ error: "Provide a public HTTP(S) URL without credentials." }, 400); }
-    const requestID = randomUUID();
-    const started = Date.now();
-    const diagnostics: string[] = [];
-    const log = (message: string, warning = false) => {
-      const line = `[${new Date().toISOString()}] ${warning ? "WARNING" : "INFO"} ${requestID} ${message}`;
-      diagnostics.push(line);
-      if (warning) console.warn(line); else console.info(line);
-    };
-    try {
-      if (request.signal.aborted) return json({ error: "Import cancelled.", diagnostics }, 499);
-      log(`Firecrawl scrape started for ${new URL(submitted).hostname}; requesting markdown, raw HTML and metadata.`);
-      const result = await fetchPage(submitted);
-      log(`Firecrawl completed in ${Date.now() - started}ms. Page HTTP status: ${result.metadata?.statusCode ?? "not supplied"}. Markdown: ${result.markdown?.length ?? 0} characters.`);
-      if (!result.markdown?.trim()) log("Firecrawl returned no markdown; trying metadata extraction anyway.", true);
-      if (request.signal.aborted) return json({ error: "Import cancelled.", diagnostics }, 499);
-      if ((result.metadata?.statusCode ?? 200) >= 400) {
-        log(`Product page returned HTTP ${result.metadata?.statusCode}.`, true);
-        return json({ error: "The product page could not be accessed.", diagnostics }, 422);
-      }
-      const { product, imageSource } = extractImport(submitted, result);
-      log(`Metadata extracted. Title: ${product.title ? "present" : "missing"}. HTTPS product image: ${imageSource ?? "missing or rejected"}. Gallery: ${product.imageURLs.length} images.`);
-      if (!product.imageURL) log("No usable product image in social metadata or supported listing gallery. Candidates must be absolute public HTTPS URLs without credentials.", true);
-      return json({ ...product, diagnostics });
-    } catch (error) {
-      const status = error instanceof SdkError ? error.status : undefined;
-      // Return useful provider details without exposing API keys, page bodies or URL queries.
-      let detail = error instanceof Error ? `${error.name}: ${error.message}` : "Unknown provider error";
-      const key = process.env.FIRECRAWL_API_KEY;
-      if (key) detail = detail.split(key).join("[redacted]");
-      detail = detail.replace(/https?:\/\/[^\s"'<>]+/g, "[URL redacted]")
-        .replace(/(?:Bearer\s+)[^\s,;]+/gi, "Bearer [redacted]")
-        .replace(/fc-[a-zA-Z0-9_-]+/g, "[key redacted]").slice(0, 4000);
-      log(`Firecrawl failed after ${Date.now() - started}ms${status ? `; HTTP ${status}` : ""}. ${detail}`, true);
-      return json({ error: status === 429 ? "Import service is busy. Try again shortly." : "The page could not be imported. Please retry.", diagnostics }, status === 429 ? 429 : 502);
-    }
+  return {
+    product: { url, title: title?.trim().slice(0, 500) ?? null, imageURL: imageURLs[0] ?? null, imageURLs, price },
+    imageSource: imageURLs[0] === image?.url ? image?.source : (imageURLs.length ? "product gallery" : undefined),
   };
 }

@@ -1,6 +1,6 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test, vi, afterEach } from "vitest";
-import { api, internal } from "../_generated/api";
+import { api } from "../_generated/api";
 import schema from "../schema";
 import { modules } from "../test.setup";
 
@@ -24,7 +24,6 @@ describe("first request", () => {
 
 describe("identity", () => {
   test("with no identity, every public function rejects", async () => {
-    vi.stubEnv("GARMS_DEV_USER", "will");
     const t = convexTest(schema, modules);
     const canvas = await t.withIdentity(alice).mutation(api.canvases.start, {});
     await expect(t.mutation(api.canvases.start, {})).rejects.toThrow(/Not signed in/);
@@ -277,20 +276,3 @@ function sticker(key: string, product: string, z = "a0") {
 function emptyChanges() {
   return { products: [], deletedProducts: [], stickers: [], deletedStickers: [], groups: [], deletedGroups: [], links: [], deletedLinks: [] };
 }
-
-describe("seed", () => {
-  test("populates only the target account", async () => {
-    const t = convexTest(schema, modules);
-    const bobCanvas = await t.withIdentity(bob).mutation(api.canvases.start, {});
-    const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["png"])));
-    const samples = [0.5, 1.6, 0.4].map((aspect, i) => ({ title: `Sample ${i}`, category: "Coat", aspect, sourceUrl: "https://shop.example", storageId }));
-    await t.mutation(internal.seed.run, { tokenIdentifier: alice.tokenIdentifier, samples, count: 20 });
-
-    const aliceCanvas = await t.withIdentity(alice).mutation(api.canvases.start, {});
-    const seeded = await t.withIdentity(alice).query(api.canvases.load, { canvas: aliceCanvas });
-    expect([seeded.products.length, seeded.stickers.length]).toEqual([3, 20]);
-    expect(seeded.groups.filter((g) => !g.isRecentUploads).flatMap((g) => g.members).sort()).toEqual(seeded.stickers.map((s) => s.key).sort());
-    const untouched = await t.withIdentity(bob).query(api.canvases.load, { canvas: bobCanvas });
-    expect([untouched.products.length, untouched.stickers.length, untouched.groups.length]).toEqual([0, 0, 1]);
-  });
-});

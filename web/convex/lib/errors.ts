@@ -1,6 +1,6 @@
 import { Data } from "effect";
 
-/** The caller has no auth identity and this is not a dev deployment. */
+/** The caller has no auth identity. */
 export class NotSignedIn extends Data.TaggedError("NotSignedIn") {}
 
 /** The Canvas does not exist or belongs to someone else; callers can't tell which. */
@@ -21,9 +21,6 @@ export class FileKeyTaken extends Data.TaggedError("FileKeyTaken") {}
 /** The uploaded file is already attached under a different key. */
 export class FileAlreadyAttached extends Data.TaggedError("FileAlreadyAttached") {}
 
-/** Seeding refuses a Canvas that already has Stickers. */
-export class CanvasNotEmpty extends Data.TaggedError("CanvasNotEmpty") {}
-
 /** Clerk did not delete the User's sign-in after their data was deleted. */
 export class ClerkDeleteFailed extends Data.TaggedError("ClerkDeleteFailed")<{ readonly cause: unknown }> {}
 
@@ -33,11 +30,14 @@ export class SearchLimited extends Data.TaggedError("SearchLimited") {}
 /** The vision model or the web search could not be reached or refused the search. */
 export class SearchFailed extends Data.TaggedError("SearchFailed")<{ readonly cause: unknown }> {}
 
+/** A product page could not be imported: unreachable (the page answered with an error), busy (Firecrawl rate limit) or failed. */
+export class ImportFailed extends Data.TaggedError("ImportFailed")<{ readonly reason: "unreachable" | "busy" | "failed"; readonly cause: unknown }> {}
+
 /** Every failure a Convex handler can report to its caller. */
 export type GarmsError =
   | NotSignedIn | CanvasNotFound | ProductNotFound | ForeignRows
-  | InvalidInput | FileKeyTaken | FileAlreadyAttached | CanvasNotEmpty | ClerkDeleteFailed
-  | SearchLimited | SearchFailed;
+  | InvalidInput | FileKeyTaken | FileAlreadyAttached | ClerkDeleteFailed
+  | SearchLimited | SearchFailed | ImportFailed;
 
 /** The message the client sees for each failure. */
 export function messageOf(error: GarmsError): string {
@@ -49,9 +49,13 @@ export function messageOf(error: GarmsError): string {
     case "InvalidInput": return error.message;
     case "FileKeyTaken": return "File key is taken.";
     case "FileAlreadyAttached": return "File is already attached.";
-    case "CanvasNotEmpty": return "This account's Canvas already has Stickers.";
     case "ClerkDeleteFailed": return "Your data was deleted, but your sign-in could not be removed. Delete your account again to finish.";
     case "SearchLimited": return "You've reached today's limit for finding listings. Try again tomorrow, or paste a link.";
     case "SearchFailed": return "Couldn't search for this listing. Try again.";
+    case "ImportFailed": return {
+      unreachable: "The product page could not be accessed.",
+      busy: "Import service is busy. Try again shortly.",
+      failed: "The page could not be imported. Please retry.",
+    }[error.reason];
   }
 }

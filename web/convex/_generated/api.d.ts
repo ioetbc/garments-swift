@@ -12,12 +12,11 @@ import type * as canvases from "../canvases.js";
 import type * as files from "../files.js";
 import type * as imports from "../imports.js";
 import type * as lib_auth from "../lib/auth.js";
-import type * as lib_context from "../lib/context.js";
+import type * as lib_db from "../lib/db.js";
 import type * as lib_edge from "../lib/edge.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as matches from "../matches.js";
 import type * as products from "../products.js";
-import type * as seed from "../seed.js";
 import type * as users from "../users.js";
 import type * as validators from "../validators.js";
 
@@ -32,12 +31,11 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   imports: typeof imports;
   "lib/auth": typeof lib_auth;
-  "lib/context": typeof lib_context;
+  "lib/db": typeof lib_db;
   "lib/edge": typeof lib_edge;
   "lib/errors": typeof lib_errors;
   matches: typeof matches;
   products: typeof products;
-  seed: typeof seed;
   users: typeof users;
   validators: typeof validators;
 }>;

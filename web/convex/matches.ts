@@ -1,8 +1,7 @@
 import { v } from "convex/values";
 import { action, internalMutation } from "./_generated/server";
 import { runAction, runMutation } from "./lib/edge";
-import { MatchService } from "./lib/match.service";
-import { UserService } from "./lib/user.service";
+import { claimSearch, MatchService } from "./lib/match.service";
 import { candidate } from "./validators";
 
 /**
@@ -19,5 +18,5 @@ export const search = action({
 export const claim = internalMutation({
   args: { tokenIdentifier: v.string() },
   returns: v.boolean(),
-  handler: (ctx, args) => runMutation(ctx, UserService.use((users) => users.claimSearch(args.tokenIdentifier))),
+  handler: (ctx, args) => runMutation(ctx, claimSearch(args.tokenIdentifier)),
 });

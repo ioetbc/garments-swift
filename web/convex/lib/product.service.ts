@@ -1,11 +1,7 @@
 import { Context, Effect, Layer } from "effect";
 import type { Product } from "../validators";
+import { Db } from "./db";
 import { InvalidInput, NotSignedIn, ProductNotFound } from "./errors";
-import { FileRepository } from "./file.repository";
-import { GroupRepository } from "./group.repository";
-import { LinkRepository } from "./link.repository";
-import { ProductRepository } from "./product.repository";
-import { StickerRepository } from "./sticker.repository";
 import { UserService } from "./user.service";
 
 /** Rejects values the validators cannot express: integer minor units and ISO 4217 codes. */
@@ -23,40 +19,36 @@ export class ProductService extends Context.Service<ProductService, {
 }>()("garms/ProductService") {
   static readonly layer = Layer.effect(ProductService, Effect.gen(function* () {
     const users = yield* UserService;
-    const products = yield* ProductRepository;
-    const stickers = yield* StickerRepository;
-    const groups = yield* GroupRepository;
-    const links = yield* LinkRepository;
-    const files = yield* FileRepository;
+    const db = yield* Db;
 
     const remove = Effect.fn("ProductService.remove")(function* (key: string) {
       const user = yield* users.caller;
-      const product = yield* products.byKey(key);
+      const product = yield* db.byKey("products", key);
       if (!product) return;
       if (!user || product.owner !== user._id) return yield* new ProductNotFound();
 
-      const placed = yield* stickers.ofProduct(product.key);
+      const placed = yield* db.stickersOf(product.key);
       const removed = new Set(placed.map((s) => s.key));
       for (const canvas of new Set(placed.map((s) => s.canvas))) {
-        for (const group of yield* groups.onCanvas(canvas)) {
+        for (const group of yield* db.onCanvas("groups", canvas)) {
           if (group.members.some((m) => removed.has(m))) {
-            yield* groups.setMembers(group._id, group.members.filter((m) => !removed.has(m)));
+            yield* db.patch(group._id, { members: group.members.filter((m) => !removed.has(m)) });
           }
         }
-        for (const link of yield* links.onCanvas(canvas)) {
-          if (removed.has(link.first) || removed.has(link.second)) yield* links.remove(link._id);
+        for (const link of yield* db.onCanvas("detachedLinks", canvas)) {
+          if (removed.has(link.first) || removed.has(link.second)) yield* db.remove(link);
         }
       }
-      for (const sticker of placed) yield* stickers.remove(sticker._id);
+      for (const sticker of placed) yield* db.remove(sticker);
 
       for (const fileKey of new Set([product.cutout, product.original, ...product.photos])) {
         if (!fileKey) continue;
-        const file = yield* files.byKey(fileKey);
-        if (file && file.owner === user._id) yield* files.remove(file);
+        const file = yield* db.byKey("files", fileKey);
+        if (file && file.owner === user._id) yield* db.remove(file);
       }
-      yield* products.remove(product._id);
+      yield* db.remove(product);
     });
 
     return ProductService.of({ remove });
-  })).pipe(Layer.provide(UserService.layer));
+  }));
 }

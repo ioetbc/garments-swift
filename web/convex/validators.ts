@@ -78,9 +78,13 @@ export const changeSet = v.object({
   deletedLinks: v.array(link),
 });
 
-/** One sample garment the seed script uploads. */
-export const sample = v.object({
-  title: v.string(), category: v.string(), aspect: v.number(), sourceUrl: v.string(), storageId: v.id("_storage"),
+/** A product page's details, read by `imports:product`. Image URLs are public HTTPS, the first being the main image. */
+export const importedProduct = v.object({
+  url: v.string(),
+  title: v.union(v.string(), v.null()),
+  imageURL: v.union(v.string(), v.null()),
+  imageURLs: v.array(v.string()),
+  price: v.union(price, v.null()),
 });
 
 export type Viewport = Infer<typeof viewport>;
@@ -89,5 +93,5 @@ export type Sticker = Infer<typeof sticker>;
 export type Group = Infer<typeof group>;
 export type Link = Infer<typeof link>;
 export type ChangeSet = Infer<typeof changeSet>;
-export type Sample = Infer<typeof sample>;
+export type ImportedProduct = Infer<typeof importedProduct>;
 export type Candidate = Infer<typeof candidate>;

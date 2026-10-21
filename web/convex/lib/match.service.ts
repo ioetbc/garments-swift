@@ -3,12 +3,30 @@ import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import type { Candidate } from "../validators";
 import { Auth } from "./auth";
+import { Db } from "./db";
 import { InvalidInput, NotSignedIn, SearchFailed, SearchLimited } from "./errors";
 import { ListingSearch, type SearchResult } from "./listing.client";
 import { ScreenshotReader } from "./screenshot.client";
+import { UserService } from "./user.service";
 
 // About 3 MB of image; the client sends a JPEG of at most 1024px, well under this.
 const MAX_IMAGE_LENGTH = 4_000_000;
+// ponytail: fixed UTC-day window; a sliding window if Users hit it at midnight.
+const SEARCHES_PER_DAY = 30;
+const DAY = 24 * 60 * 60 * 1000;
+
+/** Counts one Screenshot search against the User's daily limit, creating the User if needed. False once the limit is used up. */
+export const claimSearch = Effect.fn("claimSearch")(function* (token: string) {
+  const db = yield* Db;
+  const { user } = yield* (yield* UserService).ensure(token);
+  const row = yield* db.get(user);
+  if (!row) return false;
+  const day = Math.floor(Date.now() / DAY);
+  const count = row.searches?.day === day ? row.searches.count : 0;
+  if (count >= SEARCHES_PER_DAY) return false;
+  yield* db.patch(user, { searches: { day, count: count + 1 } });
+  return true;
+});
 
 // ponytail: hand-maintained; if junk gets through, check candidates for structured-data product pricing instead.
 const BLOCKED = new Set(["pinterest", "reddit", "google", "instagram", "tiktok", "twitter", "facebook", "tumblr", "wikipedia"]);
